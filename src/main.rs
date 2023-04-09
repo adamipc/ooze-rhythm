@@ -8,11 +8,24 @@ use std::io::Cursor;
 
 #[derive(Copy, Clone)]
 struct Vertex {
-    position: [f32; 2],
-    tex_coords: [f32; 2],
+    position: [f32; 3],
+    normal: [f32; 3],
 }
 
-implement_vertex!(Vertex, position, tex_coords);
+struct Wall {
+    positions: glium::VertexBuffer<Vertex>,
+    indices: glium::index::NoIndices,
+    shader_program: glium::Program,
+}
+
+struct Teapot {
+    positions: glium::VertexBuffer<teapot::Vertex>,
+    normals: glium::VertexBuffer<teapot::Normal>,
+    indices: glium::IndexBuffer<u16>,
+    shader_program: glium::Program,
+}
+
+implement_vertex!(Vertex, position, normal);
 
 fn load_image<'a>() -> glium::texture::RawImage2d<'a, u8> {
     let image = image::load(
@@ -42,40 +55,8 @@ fn main() {
     //    and register the window with the event_loop.
     let display = glium::Display::new(wb, cb, &event_loop).unwrap();
 
-    let indices = glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList);
-
-    let program = get_shader_program(&display);
-    // textures
-    let texture = glium::texture::SrgbTexture2d::new(&display, load_image()).unwrap();
-
-    // Prepare vertices for drawing.
-    let vertex1 = Vertex {
-        position: [-0.5, -0.5],
-        tex_coords: [0.0, 0.0],
-    };
-    let vertex2 = Vertex {
-        position: [0.0, 0.5],
-        tex_coords: [0.0, 1.0],
-    };
-    let vertex3 = Vertex {
-        position: [0.5, -0.25],
-        tex_coords: [1.0, 0.0],
-    };
-    let shape = vec![vertex1, vertex2, vertex3];
-    let vertex_buffer = glium::VertexBuffer::new(&display, &shape).unwrap();
-
-    // Teapot
-    let teapot_positions = glium::VertexBuffer::new(&display, &teapot::VERTICES).unwrap();
-    let teapot_normals = glium::VertexBuffer::new(&display, &teapot::NORMALS).unwrap();
-    let teapot_indices = glium::IndexBuffer::new(
-        &display,
-        glium::index::PrimitiveType::TrianglesList,
-        &teapot::INDICES,
-    )
-    .unwrap();
-
-    // Variables to update each frame
-    let mut t: f32 = -0.5;
+    //let teapot = Teapot::new(&display);
+    let wall = Wall::new(&display);
 
     // Loop forever until we receive `CloseRequested` event.
     event_loop.run(move |ev, _, control_flow| {
@@ -100,30 +81,11 @@ fn main() {
             _ => (),
         }
 
-        // Update `t`
-        t += 0.0002;
-        if t > 0.5 {
-            t = -0.5;
-        }
-
-        let params = get_draw_parameters();
-
         // Draw stuff!
         let mut target = display.draw();
         target.clear_color_and_depth((0.1, 0.7, 0.5, 1.0), 1.0);
-        let uniforms = get_uniforms(&target);
-
-        // Draw the teacup
-        target
-            .draw(
-                (&teapot_positions, &teapot_normals),
-                &teapot_indices,
-                &program,
-                &uniforms,
-                &params,
-            )
-            .unwrap();
-
+        //teapot.draw(&mut target);
+        wall.draw(&mut target);
         target.finish().unwrap();
         // End draw stuff...
 
@@ -138,6 +100,235 @@ fn main() {
     });
 }
 
+impl Wall {
+    pub fn new(display: &glium::Display) -> Self {
+        let shape = glium::vertex::VertexBuffer::new(
+            display,
+            &[
+                Vertex {
+                    position: [-1.0, 1.0, 0.0],
+                    normal: [0.0, 0.0, -1.0],
+                },
+                Vertex {
+                    position: [1.0, 1.0, 0.0],
+                    normal: [0.0, 0.0, -1.0],
+                },
+                Vertex {
+                    position: [-1.0, -1.0, 0.0],
+                    normal: [0.0, 0.0, -1.0],
+                },
+                Vertex {
+                    position: [1.0, -1.0, 0.0],
+                    normal: [0.0, 0.0, -1.0],
+                },
+            ],
+        )
+        .unwrap();
+        Self {
+            positions: shape,
+            indices: glium::index::NoIndices(glium::index::PrimitiveType::TriangleStrip),
+            shader_program: Self::get_shader(display),
+        }
+    }
+    fn get_shader(display: &glium::Display) -> glium::Program {
+        let vertex_shader_src = r#"
+        #version 150
+
+        in vec3 position;
+        in vec3 normal;
+
+        out vec3 v_normal;
+        out vec3 v_position;
+
+        uniform mat4 perspective;
+        uniform mat4 view;
+        uniform mat4 model;
+
+        void main() {
+            mat4 modelview = view * model;
+            v_normal = transpose(inverse(mat3(modelview))) * normal;
+            gl_Position = perspective * modelview * vec4(position, 1.0);
+            v_position = gl_Position.xyz / gl_Position.w;
+        }
+    "#;
+
+        let fragment_shader_src = r#"
+        #version 140
+
+        in vec3 v_normal;
+        in vec3 v_position;
+
+        out vec4 color;
+
+        uniform vec3 u_light;
+
+        const vec3 ambient_color = vec3(0.2, 0.0, 0.0);
+        const vec3 diffuse_color = vec3(0.6, 0.0, 0.0);
+        const vec3 specular_color = vec3(1.0, 1.0, 1.0);
+
+        void main() {
+            float diffuse = max(dot(normalize(v_normal), normalize(u_light)), 0.0);
+
+            vec3 camera_dir = normalize(-v_position);
+            vec3 half_dir = normalize(normalize(u_light) + camera_dir);
+            float specular = pow(max(dot(half_dir, normalize(v_normal)), 0.0), 16.0);
+
+            color = vec4(ambient_color + diffuse * diffuse_color + specular * specular_color, 1.0);
+        }
+    "#;
+
+        glium::Program::from_source(display, vertex_shader_src, fragment_shader_src, None).unwrap()
+    }
+
+    pub fn draw(&self, frame: &mut glium::Frame) {
+        let params = Self::get_draw_parameters();
+        let uniforms = Self::get_uniforms(frame);
+
+        // Draw the teacup
+        frame
+            .draw(
+                &self.positions,
+                &self.indices,
+                &self.shader_program,
+                &uniforms,
+                &params,
+            )
+            .unwrap();
+    }
+    fn get_draw_parameters<'a>() -> glium::DrawParameters<'a> {
+        glium::DrawParameters {
+            depth: glium::Depth {
+                test: glium::draw_parameters::DepthTest::IfLess,
+                write: true,
+                ..Default::default()
+            },
+            // disabled for teapot as it has holes in it
+            //backface_culling: glium::draw_parameters::BackfaceCullingMode::CullClockwise,
+            ..Default::default()
+        }
+    }
+    fn get_uniforms(frame: &glium::Frame) -> impl glium::uniforms::Uniforms {
+        uniform! {
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0f32],
+            ],
+            u_light: [1.4, 0.4, -0.7f32],
+            perspective: get_perspective_matrix(frame),
+            // Virtual Camera
+            view: get_view_matrix(&[0.5,  0.2, -3.0], &[-0.5, -0.2, 3.0], &[0.0, 1.0, 0.0]),
+        }
+    }
+}
+impl Teapot {
+    pub fn new(display: &glium::Display) -> Self {
+        Self {
+            positions: glium::VertexBuffer::new(display, &teapot::VERTICES).unwrap(),
+            normals: glium::VertexBuffer::new(display, &teapot::NORMALS).unwrap(),
+            indices: glium::IndexBuffer::new(
+                display,
+                glium::index::PrimitiveType::TrianglesList,
+                &teapot::INDICES,
+            )
+            .unwrap(),
+            shader_program: Self::get_shader(display),
+        }
+    }
+    fn get_shader(display: &glium::Display) -> glium::Program {
+        let vertex_shader_src = r#"
+        #version 150
+
+        in vec3 position;
+        in vec3 normal;
+
+        out vec3 v_normal;
+        out vec3 v_position;
+
+        uniform mat4 perspective;
+        uniform mat4 view;
+        uniform mat4 model;
+
+        void main() {
+            mat4 modelview = view * model;
+            v_normal = transpose(inverse(mat3(modelview))) * normal;
+            gl_Position = perspective * modelview * vec4(position, 1.0);
+            v_position = gl_Position.xyz / gl_Position.w;
+        }
+    "#;
+
+        let fragment_shader_src = r#"
+        #version 140
+
+        in vec3 v_normal;
+        in vec3 v_position;
+
+        out vec4 color;
+
+        uniform vec3 u_light;
+
+        const vec3 ambient_color = vec3(0.2, 0.0, 0.0);
+        const vec3 diffuse_color = vec3(0.6, 0.0, 0.0);
+        const vec3 specular_color = vec3(1.0, 1.0, 1.0);
+
+        void main() {
+            float diffuse = max(dot(normalize(v_normal), normalize(u_light)), 0.0);
+
+            vec3 camera_dir = normalize(-v_position);
+            vec3 half_dir = normalize(normalize(u_light) + camera_dir);
+            float specular = pow(max(dot(half_dir, normalize(v_normal)), 0.0), 16.0);
+
+            color = vec4(ambient_color + diffuse * diffuse_color + specular * specular_color, 1.0);
+        }
+    "#;
+
+        glium::Program::from_source(display, vertex_shader_src, fragment_shader_src, None).unwrap()
+    }
+
+    pub fn draw(&self, frame: &mut glium::Frame) {
+        let params = Self::get_draw_parameters();
+        let uniforms = Self::get_uniforms(frame);
+
+        // Draw the teacup
+        frame
+            .draw(
+                (&self.positions, &self.normals),
+                &self.indices,
+                &self.shader_program,
+                &uniforms,
+                &params,
+            )
+            .unwrap();
+    }
+    fn get_draw_parameters<'a>() -> glium::DrawParameters<'a> {
+        glium::DrawParameters {
+            depth: glium::Depth {
+                test: glium::draw_parameters::DepthTest::IfLess,
+                write: true,
+                ..Default::default()
+            },
+            // disabled for teapot as it has holes in it
+            //backface_culling: glium::draw_parameters::BackfaceCullingMode::CullClockwise,
+            ..Default::default()
+        }
+    }
+    fn get_uniforms(frame: &glium::Frame) -> impl glium::uniforms::Uniforms {
+        uniform! {
+            model: [
+                [0.01, 0.0, 0.0, 0.0],
+                [0.0, 0.01, 0.0, 0.0],
+                [0.0, 0.0, 0.01, 0.0],
+                [0.0, 0.0, 2.0, 1.0f32],
+            ],
+            u_light: [1.4, 0.4, -0.7f32],
+            perspective: get_perspective_matrix(frame),
+            // Virtual Camera
+            view: get_view_matrix(&[2.0, -1.0, 1.0], &[-2.0, 1.0, 1.0], &[0.0, 1.0, 0.0]),
+        }
+    }
+}
+
 fn get_draw_parameters<'a>() -> glium::DrawParameters<'a> {
     glium::DrawParameters {
         depth: glium::Depth {
@@ -146,7 +337,7 @@ fn get_draw_parameters<'a>() -> glium::DrawParameters<'a> {
             ..Default::default()
         },
         // disabled for teapot as it has holes in it
-        //backface_culling: glium::draw_parameters::BackfaceCullingMode::CullClockwise,
+        backface_culling: glium::draw_parameters::BackfaceCullingMode::CullClockwise,
         ..Default::default()
     }
 }
@@ -191,77 +382,12 @@ fn get_view_matrix(position: &[f32; 3], direction: &[f32; 3], up: &[f32; 3]) -> 
     ]
 }
 
-fn get_shader_program(display: &glium::Display) -> glium::Program {
-    let vertex_shader_src = r#"
-        #version 150
-
-        in vec3 position;
-        in vec3 normal;
-
-        out vec3 v_normal;
-        out vec3 v_position;
-
-        uniform mat4 perspective;
-        uniform mat4 view;
-        uniform mat4 model;
-
-        void main() {
-            mat4 modelview = view * model;
-            v_normal = transpose(inverse(mat3(modelview))) * normal;
-            gl_Position = perspective * modelview * vec4(position, 1.0);
-            v_position = gl_Position.xyz / gl_Position.w;
-        }
-    "#;
-
-    let fragment_shader_src = r#"
-        #version 140
-
-        in vec3 v_normal;
-        in vec3 v_position;
-
-        out vec4 color;
-
-        uniform vec3 u_light;
-
-        const vec3 ambient_color = vec3(0.2, 0.0, 0.0);
-        const vec3 diffuse_color = vec3(0.6, 0.0, 0.0);
-        const vec3 specular_color = vec3(1.0, 1.0, 1.0);
-
-        void main() {
-            float diffuse = max(dot(normalize(v_normal), normalize(u_light)), 0.0);
-
-            vec3 camera_dir = normalize(-v_position);
-            vec3 half_dir = normalize(normalize(u_light) + camera_dir);
-            float specular = pow(max(dot(half_dir, normalize(v_normal)), 0.0), 16.0);
-
-            color = vec4(ambient_color + diffuse * diffuse_color + specular * specular_color, 1.0);
-        }
-    "#;
-
-    glium::Program::from_source(display, vertex_shader_src, fragment_shader_src, None).unwrap()
-}
-
-fn get_uniforms(frame: &glium::Frame) -> impl glium::uniforms::Uniforms {
-    uniform! {
-        model: [
-            [0.01, 0.0, 0.0, 0.0],
-            [0.0, 0.01, 0.0, 0.0],
-            [0.0, 0.0, 0.01, 0.0],
-            [0.0, 0.0, 2.0, 1.0f32],
-        ],
-        u_light: [1.4, 0.4, -0.7f32],
-        perspective: get_perspective_matrix(frame),
-        // Virtual Camera
-        view: get_view_matrix(&[2.0, -1.0, 1.0], &[-2.0, 1.0, 1.0], &[0.0, 1.0, 0.0]),
-    }
-}
-
 type PerspectiveMatrix = [[f32; 4]; 4];
 fn get_perspective_matrix(frame: &glium::Frame) -> PerspectiveMatrix {
     let (width, height) = frame.get_dimensions();
     let aspect_ratio = height as f32 / width as f32;
 
-    let fov: f32 = 3.141592 / 3.0;
+    let fov: f32 = std::f32::consts::PI / 3.0;
     let zfar = 1024.0;
     let znear = 0.1;
 
