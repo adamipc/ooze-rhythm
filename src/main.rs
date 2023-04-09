@@ -17,6 +17,7 @@ struct Wall {
     positions: glium::VertexBuffer<Vertex>,
     indices: glium::index::NoIndices,
     diffuse_texture: glium::texture::SrgbTexture2d,
+    normal_texture: glium::texture::Texture2d,
     shader_program: glium::Program,
 }
 
@@ -92,8 +93,6 @@ fn main() {
 
 impl Wall {
     pub fn new(display: &glium::Display) -> Self {
-        let diffuse_texture =
-            glium::texture::SrgbTexture2d::new(display, Self::load_image()).unwrap();
         let shape = glium::vertex::VertexBuffer::new(
             display,
             &[
@@ -123,7 +122,8 @@ impl Wall {
         Self {
             positions: shape,
             indices: glium::index::NoIndices(glium::index::PrimitiveType::TriangleStrip),
-            diffuse_texture,
+            diffuse_texture: Self::load_texture(display),
+            normal_texture: Self::load_normal(display),
             shader_program: Self::get_shader(display),
         }
     }
@@ -144,11 +144,11 @@ impl Wall {
         uniform mat4 model;
 
         void main() {
+            v_tex_coords = tex_coords;
             mat4 modelview = view * model;
             v_normal = transpose(inverse(mat3(modelview))) * normal;
             gl_Position = perspective * modelview * vec4(position, 1.0);
             v_position = gl_Position.xyz / gl_Position.w;
-            v_tex_coords = tex_coords;
         }
     "#;
 
@@ -163,18 +163,42 @@ impl Wall {
 
         uniform vec3 u_light;
         uniform sampler2D diffuse_texture;
+        uniform sampler2D normal_texture;
 
         const vec3 specular_color = vec3(1.0, 1.0, 1.0);
+
+        mat3 cotangent_frame(vec3 normal, vec3 pos, vec2 uv) {
+            // get edge vectors of the pixel triangle
+            vec3 dp1 = dFdx(pos);
+            vec3 dp2 = dFdy(pos);
+            vec2 duv1 = dFdx(uv);
+            vec2 duv2 = dFdy(uv);
+
+            // solve the linear system
+            vec3 dp2perp = cross(dp2, normal);
+            vec3 dp1perp = cross(normal, dp1);
+            vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+            vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+
+            // construct a scale-invariant frame 
+            float invmax = inversesqrt(max(dot(T,T), dot(B,B)));
+            return mat3(T * invmax, B * invmax, normal);
+        }
 
         void main() {
             vec3 diffuse_color = texture(diffuse_texture, v_tex_coords).rgb;
             vec3 ambient_color = diffuse_color * 0.1;
 
-            float diffuse = max(dot(normalize(v_normal), normalize(u_light)), 0.0);
+            vec3 v_normal_unit = normalize(v_normal);
+            vec3 normal_map = texture(normal_texture, v_tex_coords).rgb;
+            mat3 tbn = cotangent_frame(v_normal_unit, -v_position, v_tex_coords);
+            vec3 real_normal = normalize(tbn * -(normal_map * 2.0 - 1.0));
+
+            float diffuse = max(dot(normalize(real_normal), normalize(u_light)), 0.0);
 
             vec3 camera_dir = normalize(-v_position);
             vec3 half_dir = normalize(normalize(u_light) + camera_dir);
-            float specular = pow(max(dot(half_dir, normalize(v_normal)), 0.0), 16.0);
+            float specular = pow(max(dot(half_dir, real_normal), 0.0), 16.0);
 
             color = vec4(ambient_color + diffuse * diffuse_color + specular * specular_color, 1.0);
         }
@@ -221,10 +245,27 @@ impl Wall {
             perspective: get_perspective_matrix(frame),
             // Virtual Camera
             view: get_view_matrix(&[0.5,  0.2, -3.0], &[-0.5, -0.2, 3.0], &[0.0, 1.0, 0.0]),
-            diffuse_texture: &self.diffuse_texture
+            diffuse_texture: &self.diffuse_texture,
+            normal_texture: &self.normal_texture,
+
         }
     }
-    fn load_image<'a>() -> glium::texture::RawImage2d<'a, u8> {
+
+    fn load_normal<'a>(display: &glium::Display) -> glium::texture::Texture2d {
+        let image = image::load(
+            Cursor::new(&include_bytes!("..\\assets\\textures\\tuto-14-normal.png")),
+            image::ImageFormat::Png,
+        )
+        .unwrap()
+        .to_rgba8();
+        let image_dimensions = image.dimensions();
+
+        let image =
+            glium::texture::RawImage2d::from_raw_rgba_reversed(&image.into_raw(), image_dimensions);
+        glium::texture::Texture2d::new(display, image).unwrap()
+    }
+
+    fn load_texture<'a>(display: &glium::Display) -> glium::texture::SrgbTexture2d {
         let image = image::load(
             Cursor::new(&include_bytes!("..\\assets\\textures\\tuto-14-diffuse.jpg")),
             image::ImageFormat::Jpeg,
@@ -233,7 +274,9 @@ impl Wall {
         .to_rgba8();
         let image_dimensions = image.dimensions();
 
-        glium::texture::RawImage2d::from_raw_rgba_reversed(&image.into_raw(), image_dimensions)
+        let image =
+            glium::texture::RawImage2d::from_raw_rgba_reversed(&image.into_raw(), image_dimensions);
+        glium::texture::SrgbTexture2d::new(display, image).unwrap()
     }
 }
 impl Teapot {
