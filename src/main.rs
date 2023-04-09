@@ -244,7 +244,7 @@ impl Wall {
             u_light: [1.4, 0.4, -0.7f32],
             perspective: get_perspective_matrix(frame),
             // Virtual Camera
-            view: get_view_matrix(&[0.5,  0.2, -3.0], &[-0.5, -0.2, 3.0], &[0.0, 1.0, 0.0]),
+            view: get_view_matrix(&[0.0,  0.0, -3.0], &[0.0, 0.0, 3.0], &[0.0, 1.0, 0.0]),
             diffuse_texture: &self.diffuse_texture,
             normal_texture: &self.normal_texture,
 
