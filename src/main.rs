@@ -10,11 +10,13 @@ use std::io::Cursor;
 struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
+    tex_coords: [f32; 2],
 }
 
 struct Wall {
     positions: glium::VertexBuffer<Vertex>,
     indices: glium::index::NoIndices,
+    diffuse_texture: glium::texture::SrgbTexture2d,
     shader_program: glium::Program,
 }
 
@@ -25,19 +27,7 @@ struct Teapot {
     shader_program: glium::Program,
 }
 
-implement_vertex!(Vertex, position, normal);
-
-fn load_image<'a>() -> glium::texture::RawImage2d<'a, u8> {
-    let image = image::load(
-        Cursor::new(&include_bytes!("..\\assets\\textures\\uv-test-bw.jpg")),
-        image::ImageFormat::Jpeg,
-    )
-    .unwrap()
-    .to_rgba8();
-    let image_dimensions = image.dimensions();
-
-    glium::texture::RawImage2d::from_raw_rgba_reversed(&image.into_raw(), image_dimensions)
-}
+implement_vertex!(Vertex, position, normal, tex_coords);
 
 fn main() {
     // 1. The **winit::EventsLoop** for handling events.
@@ -102,24 +92,30 @@ fn main() {
 
 impl Wall {
     pub fn new(display: &glium::Display) -> Self {
+        let diffuse_texture =
+            glium::texture::SrgbTexture2d::new(display, Self::load_image()).unwrap();
         let shape = glium::vertex::VertexBuffer::new(
             display,
             &[
                 Vertex {
                     position: [-1.0, 1.0, 0.0],
                     normal: [0.0, 0.0, -1.0],
+                    tex_coords: [0.0, 1.0],
                 },
                 Vertex {
                     position: [1.0, 1.0, 0.0],
                     normal: [0.0, 0.0, -1.0],
+                    tex_coords: [1.0, 1.0],
                 },
                 Vertex {
                     position: [-1.0, -1.0, 0.0],
                     normal: [0.0, 0.0, -1.0],
+                    tex_coords: [0.0, 0.0],
                 },
                 Vertex {
                     position: [1.0, -1.0, 0.0],
                     normal: [0.0, 0.0, -1.0],
+                    tex_coords: [1.0, 0.0],
                 },
             ],
         )
@@ -127,6 +123,7 @@ impl Wall {
         Self {
             positions: shape,
             indices: glium::index::NoIndices(glium::index::PrimitiveType::TriangleStrip),
+            diffuse_texture,
             shader_program: Self::get_shader(display),
         }
     }
@@ -136,9 +133,11 @@ impl Wall {
 
         in vec3 position;
         in vec3 normal;
+        in vec2 tex_coords;
 
         out vec3 v_normal;
         out vec3 v_position;
+        out vec2 v_tex_coords;
 
         uniform mat4 perspective;
         uniform mat4 view;
@@ -149,6 +148,7 @@ impl Wall {
             v_normal = transpose(inverse(mat3(modelview))) * normal;
             gl_Position = perspective * modelview * vec4(position, 1.0);
             v_position = gl_Position.xyz / gl_Position.w;
+            v_tex_coords = tex_coords;
         }
     "#;
 
@@ -157,16 +157,19 @@ impl Wall {
 
         in vec3 v_normal;
         in vec3 v_position;
+        in vec2 v_tex_coords;
 
         out vec4 color;
 
         uniform vec3 u_light;
+        uniform sampler2D diffuse_texture;
 
-        const vec3 ambient_color = vec3(0.2, 0.0, 0.0);
-        const vec3 diffuse_color = vec3(0.6, 0.0, 0.0);
         const vec3 specular_color = vec3(1.0, 1.0, 1.0);
 
         void main() {
+            vec3 diffuse_color = texture(diffuse_texture, v_tex_coords).rgb;
+            vec3 ambient_color = diffuse_color * 0.1;
+
             float diffuse = max(dot(normalize(v_normal), normalize(u_light)), 0.0);
 
             vec3 camera_dir = normalize(-v_position);
@@ -182,7 +185,7 @@ impl Wall {
 
     pub fn draw(&self, frame: &mut glium::Frame) {
         let params = Self::get_draw_parameters();
-        let uniforms = Self::get_uniforms(frame);
+        let uniforms = self.get_uniforms(frame);
 
         // Draw the teacup
         frame
@@ -202,12 +205,11 @@ impl Wall {
                 write: true,
                 ..Default::default()
             },
-            // disabled for teapot as it has holes in it
             //backface_culling: glium::draw_parameters::BackfaceCullingMode::CullClockwise,
             ..Default::default()
         }
     }
-    fn get_uniforms(frame: &glium::Frame) -> impl glium::uniforms::Uniforms {
+    fn get_uniforms<'a>(&'a self, frame: &glium::Frame) -> impl 'a + glium::uniforms::Uniforms {
         uniform! {
             model: [
                 [1.0, 0.0, 0.0, 0.0],
@@ -219,7 +221,19 @@ impl Wall {
             perspective: get_perspective_matrix(frame),
             // Virtual Camera
             view: get_view_matrix(&[0.5,  0.2, -3.0], &[-0.5, -0.2, 3.0], &[0.0, 1.0, 0.0]),
+            diffuse_texture: &self.diffuse_texture
         }
+    }
+    fn load_image<'a>() -> glium::texture::RawImage2d<'a, u8> {
+        let image = image::load(
+            Cursor::new(&include_bytes!("..\\assets\\textures\\tuto-14-diffuse.jpg")),
+            image::ImageFormat::Jpeg,
+        )
+        .unwrap()
+        .to_rgba8();
+        let image_dimensions = image.dimensions();
+
+        glium::texture::RawImage2d::from_raw_rgba_reversed(&image.into_raw(), image_dimensions)
     }
 }
 impl Teapot {
