@@ -1,7 +1,7 @@
 extern crate glium;
 extern crate image;
 
-use glium::{glutin, implement_vertex, uniform, Surface};
+use glium::{glutin, implement_vertex, uniform, Surface, Vertex};
 use std::io::Cursor;
 
 #[derive(Copy, Clone)]
@@ -11,12 +11,16 @@ struct Vertex {
     tex_coords: [f32; 2],
 }
 
-struct Wall {
-    positions: glium::VertexBuffer<Vertex>,
-    indices: glium::index::NoIndices,
-    diffuse_texture: glium::texture::SrgbTexture2d,
-    normal_texture: glium::texture::Texture2d,
-    shader_program: glium::Program,
+struct SlimeMould {
+    width: u32,
+    height: u32,
+    target_texture: glium::texture::Texture2d,
+    u_texture0: glium::texture::Texture2d,
+    u_texture1: glium::texture::Texture2d,
+    shader_1: glium::Program,
+    shader_2: glium::Program,
+    display_texture: glium::texture::Texture2d,
+    shader_pipeline: ShaderPipeline,
 }
 
 implement_vertex!(Vertex, position, normal, tex_coords);
@@ -37,7 +41,7 @@ fn main() {
     //    and register the window with the event_loop.
     let display = glium::Display::new(wb, cb, &event_loop).unwrap();
 
-    let wall = Wall::new(&display);
+    let slime_mould = SlimeMould::new(&display, 1024, 768);
 
     // Loop forever until we receive `CloseRequested` event.
     event_loop.run(move |ev, _, control_flow| {
@@ -65,7 +69,7 @@ fn main() {
         // Draw stuff!
         let mut target = display.draw();
         target.clear_color_and_depth((0.1, 0.7, 0.5, 1.0), 1.0);
-        wall.draw(&mut target);
+        slime_mould.draw(&mut target);
         target.finish().unwrap();
         // End draw stuff...
 
@@ -80,116 +84,269 @@ fn main() {
     });
 }
 
-impl Wall {
-    pub fn new(display: &glium::Display) -> Self {
-        let shape = glium::vertex::VertexBuffer::new(
-            display,
-            &[
-                Vertex {
-                    position: [-1.0, 1.0, 0.0],
-                    normal: [0.0, 0.0, -1.0],
-                    tex_coords: [0.0, 1.0],
-                },
-                Vertex {
-                    position: [1.0, 1.0, 0.0],
-                    normal: [0.0, 0.0, -1.0],
-                    tex_coords: [1.0, 1.0],
-                },
-                Vertex {
-                    position: [-1.0, -1.0, 0.0],
-                    normal: [0.0, 0.0, -1.0],
-                    tex_coords: [0.0, 0.0],
-                },
-                Vertex {
-                    position: [1.0, -1.0, 0.0],
-                    normal: [0.0, 0.0, -1.0],
-                    tex_coords: [1.0, 0.0],
-                },
-            ],
-        )
-        .unwrap();
+struct ShaderPipeline {
+    shader_1: glium::Program,
+    shader_2: glium::Program,
+    u_texture0: glium::texture::Texture2d,
+    u_texture1: glium::texture::Texture2d,
+}
+
+impl SlimeMould {
+    pub fn new(display: &glium::Display, width: u32, height: u32) -> Self {
         Self {
-            positions: shape,
-            indices: glium::index::NoIndices(glium::index::PrimitiveType::TriangleStrip),
-            diffuse_texture: Self::load_texture(display),
-            normal_texture: Self::load_normal(display),
-            shader_program: Self::get_shader(display),
+            width,
+            height,
+            target_texture: glium::Texture2d::empty_with_format(
+                display,
+                glium::texture::UncompressedFloatFormat::F32F32F32F32,
+                glium::texture::MipmapsOption::NoMipmap,
+                width,
+                height,
+            )
+            .unwrap(),
+            u_texture0: glium::Texture2d::empty_with_format(
+                display,
+                glium::texture::UncompressedFloatFormat::F32F32F32F32,
+                glium::texture::MipmapsOption::NoMipmap,
+                width,
+                height,
+            )
+            .unwrap(),
+            u_texture1: glium::Texture2d::empty_with_format(
+                display,
+                glium::texture::UncompressedFloatFormat::F32F32F32F32,
+                glium::texture::MipmapsOption::NoMipmap,
+                width,
+                height,
+            )
+            .unwrap(),
+            display_texture: Self::load_texture(display),
+            shader_pipeline: Self::create_shader_pipeline(display),
         }
     }
-    fn get_shader(display: &glium::Display) -> glium::Program {
+
+    fn create_shader_pipeline(display: &glium::Display) -> ShaderPipeline {
+        // Shader 1
+        let shader_1 = Self::get_shader_1(display);
+
+        // Attributes + Uniforms
+        let a_position_1 = shader_1.get_attrib("a_position").unwrap();
+        let u_time_1 = shader_1.get_uniform("u_time").unwrap();
+        let u_speed_multiplier_1 = shader_1.get_uniform("u_speed_multiplier").unwrap();
+        let u_texture0_1 = shader_1.get_uniform("u_texture0").unwrap();
+        let u_texture1_1 = shader_1.get_uniform("u_texture1").unwrap();
+
+        // Shader 2
+        let shader_2 = Self::get_shader_2(display);
+
+        // Attributes + Uniforms
+        let a_vertex_2 = shader_2.get_attrib("a_vertex").unwrap();
+        let u_time_2 = shader_2.get_uniform("u_time").unwrap();
+        let u_texture0_2 = shader_2.get_uniform("u_texture0").unwrap();
+        let u_texture1_2 = shader_2.get_uniform("u_texture1").unwrap();
+        let u_fade_speed = shader_2.get_uniform("u_fade_speed").unwrap();
+        let u_blur_fraction = shader_2.get_uniform("u_blur_fraction").unwrap();
+
+        // Change texture units of shader 2 to use same as shader 1
+        u_texture0_2 = 0;
+        u_texture1_2 = 1;
+
+        ShaderPipeline {
+            shader_1,
+            shader_2,
+            u_texture0_1: u_texture0_1,
+            u_texture1_1,
+        }
+    }
+
+    fn get_shader_2(display: &glium::Display) -> glium::Program {
         let vertex_shader_src = r#"
-        #version 150
+        attribute vec2 a_vertex;
+        
+        varying vec4 loc; // location in clip space
 
-        in vec3 position;
-        in vec3 normal;
-        in vec2 tex_coords;
-
-        out vec3 v_normal;
-        out vec3 v_position;
-        out vec2 v_tex_coords;
-
-        uniform mat4 perspective;
-        uniform mat4 view;
-        uniform mat4 model;
-
-        void main() {
-            v_tex_coords = tex_coords;
-            mat4 modelview = view * model;
-            v_normal = transpose(inverse(mat3(modelview))) * normal;
-            gl_Position = perspective * modelview * vec4(position, 1.0);
-            v_position = gl_Position.xyz / gl_Position.w;
+        void main(void) {
+            gl_Position = vec4(a_vertex, 0.0, 1.0);
+            loc = gl_position; // pass to frag shader
         }
     "#;
 
         let fragment_shader_src = r#"
-        #version 140
+        precision highp float;
 
-        in vec3 v_normal;
-        in vec3 v_position;
-        in vec2 v_tex_coords;
+        uniform sampler2D u_texture0; // Output of shader 1
+        uniform sampler2D u_texture1; // Previous frame's output from shader 2
 
-        out vec4 color;
+        uniform float u_time;
+        uniform float u_fade_speed;
+        uniform float u_blur_fraction;
 
-        uniform vec3 u_light;
-        uniform sampler2D diffuse_texture;
-        uniform sampler2D normal_texture;
+        varying vec4 loc; // from the vertex shader, used to compute texture locations
 
-        const vec3 specular_color = vec3(1.0, 1.0, 1.0);
+        // for blurring
+        const float Directions = 8.0;
+        const float Quality = 1.0; // 3 for snowflake
+        const float Radius = 1.0/12000.0; // TODO pass in resolution
+        float pixel_count = 1.0;
 
-        mat3 cotangent_frame(vec3 normal, vec3 pos, vec2 uv) {
-            // get edge vectors of the pixel triangle
-            vec3 dp1 = dFdx(pos);
-            vec3 dp2 = dFdy(pos);
-            vec2 duv1 = dFdx(uv);
-            vec2 duv2 = dFdy(uv);
+        void main() {
+            // Convert the clip-space coordinates into texture space ones
+            vec2 texcoord = vec2((loc.x+1.0)/2.0, (loc.y+1.0)/2.0);
 
-            // solve the linear system
-            vec3 dp2perp = cross(dp2, normal);
-            vec3 dp1perp = cross(normal, dp1);
-            vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
-            vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+            // Gaussian blur
+            vec4 blurred = texture2D(u_texture1, texcoord); // previous frame sample
+            for (float d = 0.0; d < 6.3; d += 6.3 / Directions) {
+                for (float i = 1.0/Quality; i <= 1.0; i += 1.0/Quality) {
+                    blurred += texture2D(u_texture1, texcoord+vec2(cos(d),sin(d))*Radius*i);
+                    pixel_count += 1.0;
+                }
+            }
+            blurred /= pixel_count;
 
-            // construct a scale-invariant frame 
-            float invmax = inversesqrt(max(dot(T,T), dot(B,B)));
-            return mat3(T * invmax, B * invmax, normal);
+            vec4 shader1_out = texture2D(u_texture0, texcoord); // Output of shader 1
+            vec4 prev_frame = texture2D(u_texture1, texcoord); // Previous frame of shader 2
+
+            // Modify how much blurring by mixing the blurred version with the original
+            blurred = prev_frame*(1.0-u_blur_fraction) + blurred*u_blur_fraction;
+
+            // The output color - adding shader 1 output to the blurred version of previous frame
+            gl_FragColor = shader1_out + blurred*(1.0-u_fade_speed) - 0.0001;
+        }
+    "#;
+
+        glium::Program::from_source(display, vertex_shader_src, fragment_shader_src, None).unwrap()
+    }
+
+    fn get_shader_1(display: &glium::Display) -> glium::Program {
+        let vertex_shader_src = r#"
+        precision highp float;
+
+        attribute vec4 a_position; // The current position of the vertex
+        
+        uniform sampler2D u_texture0; // The previous frame's output from shader 1
+        uniform sampler2D u_texture1; // The previous frame's output from shader 2
+
+        uniform float speed_multipler;
+
+        // Passed to fragment shader
+        varying vec4 v_color;
+
+        // TODO: make these uniform inputs?
+        const float random_steer_factor = 0.1;
+        const float constant_steer_factor = 0.5;
+        const float search_radius = 0.1;
+        const float search_angle = 0.2;
+        const float trail_strength = 0.2;
+        const float vertex_radius = 1.0;
+
+        float rand(vec2 co) {
+            return fract(sin(dot(co.xy, vec2(12.9898,78.233))) * 43758.5453);
         }
 
         void main() {
-            vec3 diffuse_color = texture(diffuse_texture, v_tex_coords).rgb;
-            vec3 ambient_color = diffuse_color * 0.1;
+            // Coord in texture space
+            vec2 texcoord = vec2((a_position.x+1.0)/2.0, (a_position.y+1.0)/2.0);
+            vec4 tex_val = texture2D(u_texture1, texcoord);
 
-            vec3 v_normal_unit = normalize(v_normal);
-            vec3 normal_map = texture(normal_texture, v_tex_coords).rgb;
-            mat3 tbn = cotangent_frame(v_normal_unit, -v_position, v_tex_coords);
-            vec3 real_normal = normalize(tbn * -(normal_map * 2.0 - 1.0));
+            // Get speed and direction
+            float direction = (a_position.w-1.0)*1000.0; // Stored it in the w component
+            float speed_var = (a.position.z)*1000.0; // Stored in the z component
 
-            float diffuse = max(dot(normalize(real_normal), normalize(u_light)), 0.0);
+            // Add some randomness to the direction before anything else
+            direction += random_steer_factor*3.0*(rand(texcoord+tex_val.xy)-0.5);
 
-            vec3 camera_dir = normalize(-v_position);
-            vec3 half_dir = normalize(normalize(u_light) + camera_dir);
-            float specular = pow(max(dot(half_dir, real_normal), 0.0), 16.0);
+            // Calculate current speed
+            float speed = speed_multiplier * speed_var;
 
-            color = vec4(ambient_color + diffuse * diffuse_color + specular * specular_color, 1.0);
+            // Read the underlying texture in three directions
+            float sense_radius = search_radius;
+            float sense_angle = search_angle;
+            float sense_left = texture2D(
+                u_texture1,
+                vec2(
+                    texcoord.x+cos(direction+sense_angle)*sense_radius,
+                    texcoord.y+sin(direction+sense_angle)*sense_radius
+                )
+            ).b;
+            float sense_right = texture2D(
+                u_texture1,
+                vec2(
+                    texcoord.x+cos(direction-sense_angle)*sense_radius,
+                    texcoord.y+sin(direction-sense_angle)*sense_radius
+                )
+            ).b;
+            float sense_forward = texture2D(
+                u_texture1,
+                vec2(
+                    texcoord.x+cos(direction)*sense_radius,
+                    texcoord.y+sin(direction)*sense_radius
+                )
+            ).b;
+
+            // Update direction based on sensed values
+            float steer_amount = constant_steer_factor + random_steer_factor * rand(texcoord+tex_val.xy);
+
+            // Straight ahead
+            if (sense_forward > sense_left && sense_forward > sense_right) {
+                direction += 0.0;
+            } else if (sense_forward < sense_left && sense_foward < sense_right) { // random
+                direction += random_steer_factor*(rand(texcoord+tex_val.xy)-0.5);
+            } else if (sense_right > sense_left) {
+                direction -= steer_amount; // Turn right
+            } else if (sense_right < sense_left) {
+                direction += steer_amount; // Turn left
+            }
+
+            // Start calculating our new position
+            float y_new = a_position.x;
+            float x_new = a_position.x;
+
+            // Hard coded bounce handling at edges
+            // reverse direction if hitting wall
+            if (y_new + speed*sin(direction) > 0.90) {
+                float d = atan(sin(direction), cos(direction));
+                direction -= 2.0*d;
+            }
+            if (y_new + speed*sin(direction) < -0.90) {
+                float d = atan(sin(direction), cos(direction));
+                direction -= 2.0*d;
+            }
+            if (x_new + speed*cos(direction) > 0.90) {
+                float d = atan(cos(direction), sin(direction));
+                direction += 2.0*d;
+            }
+            if (x_new + speed*cos(direction) < -0.90) {
+                float d = atan(cos(direction), sin(direction));
+                direction += 2.0*d;
+            }
+
+            // Update position based on direction
+            y_new += speed*speed_multipler*sin(direction);
+            x_new += speed*speed_multipler*cos(direction);
+
+            // Set the color of this vert
+            float r = 0.0;
+            float g = 0.0;
+
+            // hard coded color strategy for direction
+            r = sin(direction);
+            g = cos(direction);
+
+            v_color = vec4(r, g, trail_strength, 1.0);
+
+            // Send back the position and size
+            gl_Position = vec4(x_new, y_new, speed_var/1000.0, 1.0+direction/1000.0);
+            gl_PointSize = vertex_radius;
+        }
+    "#;
+
+        let fragment_shader_src = r#"
+        precision highp float;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_FragColor = v_color;
         }
     "#;
 
@@ -200,18 +357,11 @@ impl Wall {
         let params = Self::get_draw_parameters();
         let uniforms = self.get_uniforms(frame);
 
-        // Draw the teacup
-        frame
-            .draw(
-                &self.positions,
-                &self.indices,
-                &self.shader_program,
-                &uniforms,
-                &params,
-            )
-            .unwrap();
+        self.display_texture
+            .as_surface()
+            .fill(frame, glium::uniforms::MagnifySamplerFilter::Linear);
     }
-    fn get_draw_parameters<'a>() -> glium::DrawParameters<'a> {
+    fn get_draw_parameters<'b>() -> glium::DrawParameters<'b> {
         glium::DrawParameters {
             depth: glium::Depth {
                 test: glium::draw_parameters::DepthTest::IfLess,
@@ -222,25 +372,11 @@ impl Wall {
             ..Default::default()
         }
     }
-    fn get_uniforms<'a>(&'a self, frame: &glium::Frame) -> impl 'a + glium::uniforms::Uniforms {
-        uniform! {
-            model: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0f32],
-            ],
-            u_light: [1.4, 0.4, -0.7f32],
-            perspective: get_perspective_matrix(frame),
-            // Virtual Camera
-            view: get_view_matrix(&[0.0,  0.0, -3.0], &[0.0, 0.0, 3.0], &[0.0, 1.0, 0.0]),
-            diffuse_texture: &self.diffuse_texture,
-            normal_texture: &self.normal_texture,
-
-        }
+    fn get_uniforms<'b>(&'b self, frame: &glium::Frame) -> impl 'b + glium::uniforms::Uniforms {
+        uniform! {}
     }
 
-    fn load_normal<'a>(display: &glium::Display) -> glium::texture::Texture2d {
+    fn load_normal<'b>(display: &glium::Display) -> glium::texture::Texture2d {
         let image = image::load(
             Cursor::new(&include_bytes!("..\\assets\\textures\\tuto-14-normal.png")),
             image::ImageFormat::Png,
@@ -254,7 +390,7 @@ impl Wall {
         glium::texture::Texture2d::new(display, image).unwrap()
     }
 
-    fn load_texture<'a>(display: &glium::Display) -> glium::texture::SrgbTexture2d {
+    fn load_texture<'b>(display: &glium::Display) -> glium::texture::Texture2d {
         let image = image::load(
             Cursor::new(&include_bytes!("..\\assets\\textures\\tuto-14-diffuse.jpg")),
             image::ImageFormat::Jpeg,
@@ -265,7 +401,7 @@ impl Wall {
 
         let image =
             glium::texture::RawImage2d::from_raw_rgba_reversed(&image.into_raw(), image_dimensions);
-        glium::texture::SrgbTexture2d::new(display, image).unwrap()
+        glium::texture::Texture2d::new(display, image).unwrap()
     }
 }
 
