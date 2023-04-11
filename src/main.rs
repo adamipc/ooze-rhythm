@@ -1,29 +1,16 @@
 extern crate glium;
 extern crate image;
 
-use glium::{glutin, implement_vertex, uniform, Surface, Vertex};
-use std::io::Cursor;
-
-#[derive(Copy, Clone)]
-struct Vertex {
-    position: [f32; 3],
-    normal: [f32; 3],
-    tex_coords: [f32; 2],
-}
+use glium::{glutin, implement_vertex, uniform, Surface};
+use rand::Rng;
+use std::cell::RefCell;
 
 struct SlimeMould {
     width: u32,
     height: u32,
-    target_texture: glium::texture::Texture2d,
-    u_texture0: glium::texture::Texture2d,
-    u_texture1: glium::texture::Texture2d,
-    shader_1: glium::Program,
-    shader_2: glium::Program,
-    display_texture: glium::texture::Texture2d,
+    target_texture: RefCell<glium::texture::Texture2d>,
     shader_pipeline: ShaderPipeline,
 }
-
-implement_vertex!(Vertex, position, normal, tex_coords);
 
 fn main() {
     // 1. The **winit::EventsLoop** for handling events.
@@ -41,7 +28,7 @@ fn main() {
     //    and register the window with the event_loop.
     let display = glium::Display::new(wb, cb, &event_loop).unwrap();
 
-    let slime_mould = SlimeMould::new(&display, 1024, 768);
+    let mut slime_mould = SlimeMould::new(&display, 1024, 768);
 
     // Loop forever until we receive `CloseRequested` event.
     event_loop.run(move |ev, _, control_flow| {
@@ -68,8 +55,8 @@ fn main() {
 
         // Draw stuff!
         let mut target = display.draw();
-        target.clear_color_and_depth((0.1, 0.7, 0.5, 1.0), 1.0);
-        slime_mould.draw(&mut target);
+        target.clear_color(1.0, 1.0, 1.0, 1.0);
+        slime_mould.draw(&mut target, &display);
         target.finish().unwrap();
         // End draw stuff...
 
@@ -84,11 +71,35 @@ fn main() {
     });
 }
 
+#[derive(Copy, Clone)]
+struct Vertex {
+    a_vertex: [f32; 2],
+}
+
+#[derive(Copy, Clone)]
+struct Position {
+    a_position: [f32; 4],
+}
+
+impl Default for Position {
+    fn default() -> Self {
+        Self {
+            a_position: [0.0, 0.0, 0.0, 0.0],
+        }
+    }
+}
+
+implement_vertex!(Vertex, a_vertex);
+implement_vertex!(Position, a_position);
+
 struct ShaderPipeline {
     shader_1: glium::Program,
     shader_2: glium::Program,
-    u_texture0: glium::texture::Texture2d,
-    u_texture1: glium::texture::Texture2d,
+    vertex_buffer: glium::VertexBuffer<Vertex>,
+    buffer_a: RefCell<glium::VertexBuffer<Position>>,
+    buffer_b: RefCell<glium::VertexBuffer<Position>>,
+    u_texture0: RefCell<glium::texture::Texture2d>,
+    u_texture1: RefCell<glium::texture::Texture2d>,
 }
 
 impl SlimeMould {
@@ -96,82 +107,107 @@ impl SlimeMould {
         Self {
             width,
             height,
-            target_texture: glium::Texture2d::empty_with_format(
-                display,
-                glium::texture::UncompressedFloatFormat::F32F32F32F32,
-                glium::texture::MipmapsOption::NoMipmap,
-                width,
-                height,
-            )
-            .unwrap(),
-            u_texture0: glium::Texture2d::empty_with_format(
-                display,
-                glium::texture::UncompressedFloatFormat::F32F32F32F32,
-                glium::texture::MipmapsOption::NoMipmap,
-                width,
-                height,
-            )
-            .unwrap(),
-            u_texture1: glium::Texture2d::empty_with_format(
-                display,
-                glium::texture::UncompressedFloatFormat::F32F32F32F32,
-                glium::texture::MipmapsOption::NoMipmap,
-                width,
-                height,
-            )
-            .unwrap(),
-            display_texture: Self::load_texture(display),
-            shader_pipeline: Self::create_shader_pipeline(display),
+            target_texture: RefCell::new(
+                glium::texture::Texture2d::empty_with_format(
+                    display,
+                    glium::texture::UncompressedFloatFormat::F32F32F32F32,
+                    glium::texture::MipmapsOption::NoMipmap,
+                    width,
+                    height,
+                )
+                .unwrap(),
+            ),
+            shader_pipeline: Self::create_shader_pipeline(display, width, height),
         }
     }
 
-    fn create_shader_pipeline(display: &glium::Display) -> ShaderPipeline {
+    fn create_shader_pipeline(display: &glium::Display, width: u32, height: u32) -> ShaderPipeline {
         // Shader 1
         let shader_1 = Self::get_shader_1(display);
 
-        // Attributes + Uniforms
-        let a_position_1 = shader_1.get_attrib("a_position").unwrap();
-        let u_time_1 = shader_1.get_uniform("u_time").unwrap();
-        let u_speed_multiplier_1 = shader_1.get_uniform("u_speed_multiplier").unwrap();
-        let u_texture0_1 = shader_1.get_uniform("u_texture0").unwrap();
-        let u_texture1_1 = shader_1.get_uniform("u_texture1").unwrap();
+        for uniform in shader_1.uniforms() {
+            println!("{:?}", uniform);
+        }
+        for attribute in shader_1.attributes() {
+            println!("{:?}", attribute);
+        }
 
         // Shader 2
         let shader_2 = Self::get_shader_2(display);
 
-        // Attributes + Uniforms
-        let a_vertex_2 = shader_2.get_attrib("a_vertex").unwrap();
-        let u_time_2 = shader_2.get_uniform("u_time").unwrap();
-        let u_texture0_2 = shader_2.get_uniform("u_texture0").unwrap();
-        let u_texture1_2 = shader_2.get_uniform("u_texture1").unwrap();
-        let u_fade_speed = shader_2.get_uniform("u_fade_speed").unwrap();
-        let u_blur_fraction = shader_2.get_uniform("u_blur_fraction").unwrap();
+        for uniform in shader_2.uniforms() {
+            println!("{:?}", uniform);
+        }
+        for attribute in shader_2.attributes() {
+            println!("{:?}", attribute);
+        }
 
-        // Change texture units of shader 2 to use same as shader 1
-        u_texture0_2 = 0;
-        u_texture1_2 = 1;
+        // Textures
+        let u_texture0 = glium::texture::Texture2d::empty_with_format(
+            display,
+            glium::texture::UncompressedFloatFormat::F32F32F32F32,
+            glium::texture::MipmapsOption::NoMipmap,
+            width,
+            height,
+        )
+        .unwrap();
+
+        let u_texture1 = glium::texture::Texture2d::empty_with_format(
+            display,
+            glium::texture::UncompressedFloatFormat::F32F32F32F32,
+            glium::texture::MipmapsOption::NoMipmap,
+            width,
+            height,
+        )
+        .unwrap();
+
+        let vertex_buffer = glium::VertexBuffer::new(
+            display,
+            &[
+                Vertex {
+                    a_vertex: [-1.0, -1.0],
+                },
+                Vertex {
+                    a_vertex: [1.0, -1.0],
+                },
+                Vertex {
+                    a_vertex: [1.0, 1.0],
+                },
+                Vertex {
+                    a_vertex: [-1.0, 1.0],
+                },
+            ],
+        )
+        .unwrap();
+
+        let (buffer_a, buffer_b) = Self::get_initial_locations(display, u32::pow(2, 16));
 
         ShaderPipeline {
+            buffer_a: RefCell::new(buffer_a),
+            buffer_b: RefCell::new(buffer_b),
+            vertex_buffer,
             shader_1,
             shader_2,
-            u_texture0_1: u_texture0_1,
-            u_texture1_1,
+            u_texture0: RefCell::new(u_texture0),
+            u_texture1: RefCell::new(u_texture1),
         }
     }
 
     fn get_shader_2(display: &glium::Display) -> glium::Program {
         let vertex_shader_src = r#"
+        #version 150
         attribute vec2 a_vertex;
         
-        varying vec4 loc; // location in clip space
+        out vec4 loc; // location in clip space
 
         void main(void) {
             gl_Position = vec4(a_vertex, 0.0, 1.0);
-            loc = gl_position; // pass to frag shader
+            loc = gl_Position; // pass to frag shader
         }
     "#;
 
         let fragment_shader_src = r#"
+        #version 150
         precision highp float;
 
         uniform sampler2D u_texture0; // Output of shader 1
@@ -181,7 +217,7 @@ impl SlimeMould {
         uniform float u_fade_speed;
         uniform float u_blur_fraction;
 
-        varying vec4 loc; // from the vertex shader, used to compute texture locations
+        in vec4 loc; // from the vertex shader, used to compute texture locations
 
         // for blurring
         const float Directions = 8.0;
@@ -219,17 +255,17 @@ impl SlimeMould {
 
     fn get_shader_1(display: &glium::Display) -> glium::Program {
         let vertex_shader_src = r#"
+        #version 150
         precision highp float;
 
-        attribute vec4 a_position; // The current position of the vertex
+        in vec4 a_position; // The current position of the vertex
         
-        uniform sampler2D u_texture0; // The previous frame's output from shader 1
         uniform sampler2D u_texture1; // The previous frame's output from shader 2
 
-        uniform float speed_multipler;
+        uniform float speed_multiplier;
 
         // Passed to fragment shader
-        varying vec4 v_color;
+        out vec4 v_color;
 
         // TODO: make these uniform inputs?
         const float random_steer_factor = 0.1;
@@ -250,7 +286,7 @@ impl SlimeMould {
 
             // Get speed and direction
             float direction = (a_position.w-1.0)*1000.0; // Stored it in the w component
-            float speed_var = (a.position.z)*1000.0; // Stored in the z component
+            float speed_var = (a_position.z)*1000.0; // Stored in the z component
 
             // Add some randomness to the direction before anything else
             direction += random_steer_factor*3.0*(rand(texcoord+tex_val.xy)-0.5);
@@ -289,7 +325,7 @@ impl SlimeMould {
             // Straight ahead
             if (sense_forward > sense_left && sense_forward > sense_right) {
                 direction += 0.0;
-            } else if (sense_forward < sense_left && sense_foward < sense_right) { // random
+            } else if (sense_forward < sense_left && sense_forward < sense_right) { // random
                 direction += random_steer_factor*(rand(texcoord+tex_val.xy)-0.5);
             } else if (sense_right > sense_left) {
                 direction -= steer_amount; // Turn right
@@ -321,8 +357,8 @@ impl SlimeMould {
             }
 
             // Update position based on direction
-            y_new += speed*speed_multipler*sin(direction);
-            x_new += speed*speed_multipler*cos(direction);
+            y_new += speed*speed_multiplier*sin(direction);
+            x_new += speed*speed_multiplier*cos(direction);
 
             // Set the color of this vert
             float r = 0.0;
@@ -341,125 +377,173 @@ impl SlimeMould {
     "#;
 
         let fragment_shader_src = r#"
+        #version 150
         precision highp float;
 
-        varying vec4 v_color;
+        out vec4 v_color;
 
         void main() {
             gl_FragColor = v_color;
         }
     "#;
 
-        glium::Program::from_source(display, vertex_shader_src, fragment_shader_src, None).unwrap()
-    }
-
-    pub fn draw(&self, frame: &mut glium::Frame) {
-        let params = Self::get_draw_parameters();
-        let uniforms = self.get_uniforms(frame);
-
-        self.display_texture
-            .as_surface()
-            .fill(frame, glium::uniforms::MagnifySamplerFilter::Linear);
-    }
-    fn get_draw_parameters<'b>() -> glium::DrawParameters<'b> {
-        glium::DrawParameters {
-            depth: glium::Depth {
-                test: glium::draw_parameters::DepthTest::IfLess,
-                write: true,
-                ..Default::default()
+        glium::Program::new(
+            display,
+            glium::program::ProgramCreationInput::SourceCode {
+                vertex_shader: vertex_shader_src,
+                fragment_shader: fragment_shader_src,
+                geometry_shader: None,
+                tessellation_control_shader: None,
+                tessellation_evaluation_shader: None,
+                transform_feedback_varyings: Some((
+                    vec!["gl_Position".to_string()],
+                    glium::program::TransformFeedbackMode::Separate,
+                )),
+                outputs_srgb: false,
+                uses_point_size: true,
             },
-            //backface_culling: glium::draw_parameters::BackfaceCullingMode::CullClockwise,
+        )
+        .unwrap()
+    }
+
+    fn get_initial_locations(
+        display: &glium::Display,
+        n: u32,
+    ) -> (glium::VertexBuffer<Position>, glium::VertexBuffer<Position>) {
+        let mut initial_locations = vec![Position::default(); n as usize];
+        let initial_speed = 1.0;
+        let speed_randomness = 0.1;
+
+        let mut rng = rand::thread_rng();
+        for i in 0..n {
+            let x: f32 = rng.gen_range(-1.0..1.0);
+            let y: f32 = rng.gen_range(-1.0..1.0);
+            let speed: f32 = (rng.gen_range(0.0..1.00) * 0.01 * speed_randomness
+                + 0.01 * initial_speed)
+                / 1000.0;
+            let direction: f32 = rng.gen_range(0.0..1.0);
+            initial_locations[i as usize] = Position {
+                a_position: [x, y, speed, direction],
+            };
+        }
+
+        (
+            glium::VertexBuffer::new(display, &initial_locations).unwrap(),
+            glium::VertexBuffer::new(display, &initial_locations).unwrap(),
+        )
+    }
+
+    pub fn draw(&self, frame: &mut impl glium::Surface, display: &glium::Display) {
+        {
+            let target_texture = self.target_texture.borrow();
+            let mut framebuffer =
+                glium::framebuffer::SimpleFrameBuffer::new(display, &*target_texture).unwrap();
+            self.draw_1(&mut framebuffer, display);
+        }
+
+        {
+            // Read pixels from target_texture to u_texture0
+            let mut u_texture0 = self.shader_pipeline.u_texture0.borrow_mut();
+            *u_texture0 = glium::texture::Texture2d::new(
+                display,
+                self.target_texture
+                    .borrow()
+                    .read_to_pixel_buffer()
+                    .read_as_texture_2d::<glium::texture::RawImage2d<u8>>()
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+
+        self.draw_1(frame, display);
+
+        {
+            let target_texture = self.target_texture.borrow();
+            let mut framebuffer =
+                glium::framebuffer::SimpleFrameBuffer::new(display, &*target_texture).unwrap();
+            self.draw_2(&mut framebuffer, display);
+        }
+
+        self.draw_2(frame, display);
+
+        // Read pixels from target_texture to u_texture1
+        let mut u_texture1 = self.shader_pipeline.u_texture1.borrow_mut();
+        *u_texture1 = glium::texture::Texture2d::new(
+            display,
+            self.target_texture
+                .borrow()
+                .read_to_pixel_buffer()
+                .read_as_texture_2d::<glium::texture::RawImage2d<u8>>()
+                .unwrap(),
+        )
+        .unwrap();
+    }
+
+    pub fn draw_1(&self, frame: &mut impl glium::Surface, display: &glium::Display) {
+        {
+            let mut buffer_b = self.shader_pipeline.buffer_b.borrow_mut();
+            let session = glium::vertex::TransformFeedbackSession::new(
+                display,
+                &self.shader_pipeline.shader_1,
+                &mut buffer_b,
+            )
+            .unwrap();
+
+            let draw_parameters = Self::get_draw_parameters_shader_1(&session);
+
+            let u_texture1 = &*self.shader_pipeline.u_texture1.borrow();
+            let uniforms = uniform! { u_texture1: u_texture1, speed_multiplier: 1.0f32 };
+
+            // Draw shader_1 to the frame
+            frame
+                .draw(
+                    &*self.shader_pipeline.buffer_a.borrow(),
+                    glium::index::NoIndices(glium::index::PrimitiveType::Points),
+                    &self.shader_pipeline.shader_1,
+                    &uniforms,
+                    &draw_parameters,
+                )
+                .unwrap();
+        }
+        // Swap buffers
+        std::mem::swap(
+            &mut self.shader_pipeline.buffer_a.borrow_mut(),
+            &mut self.shader_pipeline.buffer_b.borrow_mut(),
+        );
+    }
+
+    pub fn draw_2(&self, frame: &mut impl glium::Surface, display: &glium::Display) {
+        let u_texture0 = &*self.shader_pipeline.u_texture0.borrow();
+        let u_texture1 = &*self.shader_pipeline.u_texture1.borrow();
+        let uniforms = uniform! {
+            u_texture0: u_texture0,
+            u_texture1: u_texture1,
+            u_fade_speed: 0.07f32,
+            u_blur_fraction: 1.0f32,
+        };
+        // Draw the results of shader_2 to the screen
+        frame
+            .draw(
+                &self.shader_pipeline.vertex_buffer,
+                glium::index::NoIndices(glium::index::PrimitiveType::TriangleFan),
+                &self.shader_pipeline.shader_2,
+                &uniforms,
+                &Self::get_draw_parameters_shader_2(),
+            )
+            .unwrap(); // */
+    }
+
+    fn get_draw_parameters_shader_2<'b>() -> glium::DrawParameters<'b> {
+        glium::DrawParameters {
             ..Default::default()
         }
     }
-    fn get_uniforms<'b>(&'b self, frame: &glium::Frame) -> impl 'b + glium::uniforms::Uniforms {
-        uniform! {}
+    fn get_draw_parameters_shader_1<'b>(
+        session: &'b glium::vertex::TransformFeedbackSession,
+    ) -> glium::DrawParameters<'b> {
+        glium::DrawParameters {
+            transform_feedback: Some(session),
+            ..Default::default()
+        }
     }
-
-    fn load_normal<'b>(display: &glium::Display) -> glium::texture::Texture2d {
-        let image = image::load(
-            Cursor::new(&include_bytes!("..\\assets\\textures\\tuto-14-normal.png")),
-            image::ImageFormat::Png,
-        )
-        .unwrap()
-        .to_rgba8();
-        let image_dimensions = image.dimensions();
-
-        let image =
-            glium::texture::RawImage2d::from_raw_rgba_reversed(&image.into_raw(), image_dimensions);
-        glium::texture::Texture2d::new(display, image).unwrap()
-    }
-
-    fn load_texture<'b>(display: &glium::Display) -> glium::texture::Texture2d {
-        let image = image::load(
-            Cursor::new(&include_bytes!("..\\assets\\textures\\tuto-14-diffuse.jpg")),
-            image::ImageFormat::Jpeg,
-        )
-        .unwrap()
-        .to_rgba8();
-        let image_dimensions = image.dimensions();
-
-        let image =
-            glium::texture::RawImage2d::from_raw_rgba_reversed(&image.into_raw(), image_dimensions);
-        glium::texture::Texture2d::new(display, image).unwrap()
-    }
-}
-
-fn get_view_matrix(position: &[f32; 3], direction: &[f32; 3], up: &[f32; 3]) -> [[f32; 4]; 4] {
-    let f = {
-        let f = direction;
-        let len = f[0] * f[0] + f[1] * f[1] + f[2] * f[2];
-        let len = len.sqrt();
-        [f[0] / len, f[1] / len, f[2] / len]
-    };
-
-    let s = [
-        up[1] * f[2] - up[2] * f[1],
-        up[2] * f[0] - up[0] * f[2],
-        up[0] * f[1] - up[1] * f[0],
-    ];
-
-    let s_norm = {
-        let len = s[0] * s[0] + s[1] * s[1] + s[2] * s[2];
-        let len = len.sqrt();
-        [s[0] / len, s[1] / len, s[2] / len]
-    };
-
-    let u = [
-        f[1] * s_norm[2] - f[2] * s_norm[1],
-        f[2] * s_norm[0] - f[0] * s_norm[2],
-        f[0] * s_norm[1] - f[1] * s_norm[0],
-    ];
-
-    let p = [
-        -position[0] * s_norm[0] - position[1] * s_norm[1] - position[2] * s_norm[2],
-        -position[0] * u[0] - position[1] * u[1] - position[2] * u[2],
-        -position[0] * f[0] - position[1] * f[1] - position[2] * f[2],
-    ];
-
-    [
-        [s_norm[0], u[0], f[0], 0.0],
-        [s_norm[1], u[1], f[1], 0.0],
-        [s_norm[2], u[2], f[2], 0.0],
-        [p[0], p[1], p[2], 1.0f32],
-    ]
-}
-
-type PerspectiveMatrix = [[f32; 4]; 4];
-fn get_perspective_matrix(frame: &glium::Frame) -> PerspectiveMatrix {
-    let (width, height) = frame.get_dimensions();
-    let aspect_ratio = height as f32 / width as f32;
-
-    let fov: f32 = std::f32::consts::PI / 3.0;
-    let zfar = 1024.0;
-    let znear = 0.1;
-
-    let f = 1.0 / (fov / 2.0).tan();
-
-    [
-        [f * aspect_ratio, 0.0, 0.0, 0.0],
-        [0.0, f, 0.0, 0.0],
-        [0.0, 0.0, (zfar + znear) / (zfar - znear), 1.0],
-        [0.0, 0.0, -(2.0 * zfar * znear) / (zfar - znear), 0.0],
-    ]
 }
