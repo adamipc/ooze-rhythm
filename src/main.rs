@@ -1,12 +1,17 @@
 extern crate glium;
 extern crate image;
 
+use glium::glutin::event::{ElementState, Event, StartCause, VirtualKeyCode, WindowEvent};
+use glium::glutin::event_loop::{ControlFlow, EventLoop};
+use glium::glutin::window::Fullscreen;
 use glium::{glutin, implement_vertex, uniform, Surface};
 use rand::Rng;
 use std::cell::RefCell;
+use std::time::{Duration, Instant};
 
 struct SlimeMould {
-    target_texture: RefCell<glium::texture::Texture2d>,
+    target_texture0: RefCell<glium::texture::Texture2d>,
+    target_texture1: RefCell<glium::texture::Texture2d>,
     shader_pipeline: ShaderPipeline,
     preset: Preset,
 }
@@ -57,6 +62,8 @@ enum ColorStrategy {
 
 enum PresetName {
     GreenSlime,
+    CollapsingBubble,
+    SlimeRing,
     Tartan,
 }
 
@@ -79,6 +86,42 @@ impl Preset {
                 color_strategy: ColorStrategy::Position,
 
                 fade_speed: 0.01,
+                blurring: 1.0,
+            },
+            PresetName::CollapsingBubble => Preset {
+                number_of_points: u32::pow(2, 11),
+                starting_arrangement: StartingArrangement::Ring,
+                average_starting_speed: 0.5,
+                starting_speed_spread: 0.1,
+
+                speed_multiplier: 1.0,
+                point_size: 1.5,
+                random_steer_factor: 0.1,
+                constant_steer_factor: 0.5,
+                trail_strength: 0.2,
+                search_radius: 0.1,
+                wall_strategy: WallStrategy::Wrap,
+                color_strategy: ColorStrategy::Direction,
+
+                fade_speed: 0.005,
+                blurring: 1.0,
+            },
+            PresetName::SlimeRing => Preset {
+                number_of_points: u32::pow(2, 18),
+                starting_arrangement: StartingArrangement::Ring,
+                average_starting_speed: 0.1,
+                starting_speed_spread: 0.1,
+
+                speed_multiplier: 1.0,
+                point_size: 1.0,
+                random_steer_factor: 0.1,
+                constant_steer_factor: 0.4,
+                trail_strength: 0.2,
+                search_radius: 0.01,
+                wall_strategy: WallStrategy::Wrap,
+                color_strategy: ColorStrategy::Grey,
+
+                fade_speed: 0.05,
                 blurring: 1.0,
             },
             PresetName::Tartan => Preset {
@@ -107,11 +150,18 @@ fn main() {
     // 1. The **winit::EventsLoop** for handling events.
     let event_loop = glutin::event_loop::EventLoop::new();
 
-    let (width, height) = (256, 256);
+    let monitor = event_loop.primary_monitor().unwrap();
+    let monitor_size = monitor.size();
+
+    let (width, height) = (monitor_size.width, monitor_size.height);
+
     // 2. Parameters for building the Window.
     let wb = glutin::window::WindowBuilder::new()
         .with_inner_size(glutin::dpi::LogicalSize::new(width as f32, height as f32))
-        .with_title("Hello world!");
+        .with_title("Hello world!")
+        .with_fullscreen(Some(glutin::window::Fullscreen::Borderless(
+            event_loop.primary_monitor(),
+        )));
 
     // 3. Parameters for building the OpenGL context.
     let cb = glutin::ContextBuilder::new().with_depth_buffer(24);
@@ -120,51 +170,110 @@ fn main() {
     //    and register the window with the event_loop.
     let display = glium::Display::new(wb, cb, &event_loop).unwrap();
 
-    let preset = Preset::new(PresetName::GreenSlime);
+    let preset = Preset::new(PresetName::Tartan);
 
     let slime_mould = SlimeMould::new(&display, width, height, preset);
 
-    // Loop forever until we receive `CloseRequested` event.
-    event_loop.run(move |ev, _, control_flow| {
-        let frame_start_time = std::time::Instant::now();
+    let mut fullscreen = false;
 
-        // Check to see if we should exit before doing work
-        match ev {
-            glutin::event::Event::WindowEvent { event, .. } => match event {
-                glutin::event::WindowEvent::CloseRequested => {
-                    // Request to exit
-                    *control_flow = glutin::event_loop::ControlFlow::Exit;
-                    return;
-                }
-                _ => return,
-            },
-            // Wait until we are ready to draw again
-            glutin::event::Event::NewEvents(cause) => match cause {
-                glutin::event::StartCause::ResumeTimeReached { .. } => (),
-                glutin::event::StartCause::Init => (),
-                _ => return,
-            },
-            _ => (),
-        }
-
-        // Draw stuff!
+    start_loop(event_loop, move |events| {
         let mut target = display.draw();
         target.clear_color(0.0, 0.0, 0.0, 1.0);
         slime_mould.draw(&mut target, &display);
         target.finish().unwrap();
-        // End draw stuff...
 
-        // Attempt to display 30 frames per second.
-        let next_frame_time = frame_start_time + std::time::Duration::from_nanos(16_666_667) * 4;
+        let mut action = Action::Continue;
 
-        // Request to wait until the frame time is up
-        // QUESTION: what if this time has already passed? I assume this is a noop?
-        if next_frame_time > std::time::Instant::now() {
-            *control_flow = glutin::event_loop::ControlFlow::WaitUntil(next_frame_time);
-        } else {
-            println!("Missed frame time!");
+        let mut enter_pressed = false;
+
+        for event in events {
+            match event {
+                Event::WindowEvent { event, window_id } => {
+                    if *window_id == display.gl_window().window().id() {
+                        match event {
+                            WindowEvent::CloseRequested => action = Action::Stop,
+                            WindowEvent::KeyboardInput { input, .. } => {
+                                if let ElementState::Pressed = input.state {
+                                    if let Some(VirtualKeyCode::Return) = input.virtual_keycode {
+                                        enter_pressed = true;
+                                    }
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+                _ => (),
+            }
         }
+
+        if enter_pressed {
+            if fullscreen {
+                display.gl_window().window().set_fullscreen(None);
+                fullscreen = false;
+            } else {
+                let monitor = display
+                    .gl_window()
+                    .window()
+                    .available_monitors()
+                    .next()
+                    .unwrap();
+                let fs = Fullscreen::Borderless(Some(monitor));
+                display.gl_window().window().set_fullscreen(Some(fs));
+
+                fullscreen = true;
+            }
+        }
+
+        action
     });
+}
+
+pub enum Action {
+    Stop,
+    Continue,
+}
+
+pub fn start_loop<F>(event_loop: EventLoop<()>, mut callback: F) -> !
+where
+    F: 'static + FnMut(&Vec<Event<'_, ()>>) -> Action,
+{
+    let mut events_buffer = Vec::new();
+    let mut next_frame_time = Instant::now();
+    event_loop.run(move |event, _, control_flow| {
+        let run_callback = match event.to_static() {
+            Some(Event::NewEvents(cause)) => match cause {
+                StartCause::ResumeTimeReached { .. } | StartCause::Init => true,
+                _ => false,
+            },
+            Some(event) => {
+                events_buffer.push(event);
+                false
+            }
+            None => {
+                // Ignore this event.
+                false
+            }
+        };
+
+        let action = if run_callback {
+            let action = callback(&events_buffer);
+            next_frame_time = Instant::now() + Duration::from_nanos(16666667);
+            // TODO: Add back the old accumulator loop in some way
+
+            events_buffer.clear();
+            action
+        } else {
+            Action::Continue
+        };
+
+        match action {
+            Action::Continue => {
+                *control_flow = ControlFlow::WaitUntil(next_frame_time);
+            }
+            Action::Stop => *control_flow = ControlFlow::Exit,
+        }
+    })
 }
 
 #[derive(Copy, Clone)]
@@ -201,7 +310,17 @@ struct ShaderPipeline {
 impl SlimeMould {
     pub fn new(display: &glium::Display, width: u32, height: u32, preset: Preset) -> Self {
         Self {
-            target_texture: RefCell::new(
+            target_texture0: RefCell::new(
+                glium::texture::Texture2d::empty_with_format(
+                    display,
+                    glium::texture::UncompressedFloatFormat::F32F32F32F32,
+                    glium::texture::MipmapsOption::NoMipmap,
+                    width,
+                    height,
+                )
+                .unwrap(),
+            ),
+            target_texture1: RefCell::new(
                 glium::texture::Texture2d::empty_with_format(
                     display,
                     glium::texture::UncompressedFloatFormat::F32F32F32F32,
@@ -287,10 +406,10 @@ impl SlimeMould {
 
     fn get_shader_2(display: &glium::Display) -> glium::Program {
         let vertex_shader_src = r#"
-        #version 150
+        #version 140
         attribute vec2 a_vertex;
         
-        out vec4 loc; // location in clip space
+        varying vec4 loc; // location in clip space
 
         void main(void) {
             gl_Position = vec4(a_vertex, 0.0, 1.0);
@@ -299,49 +418,60 @@ impl SlimeMould {
     "#;
 
         let fragment_shader_src = r#"
-        #version 150
-        precision highp float;
+            #version 140
+            precision highp float;
+            uniform sampler2D u_texture0; // A texture input - the output of shader 1
+            uniform sampler2D u_texture1; // A texture input - the previous frame's output from shader 2
+            uniform float u_fade_speed; // TODO
+            uniform float u_blur_fraction; // TODO
+            varying vec4 loc; // from the vertex shader, used to compute texture locations
 
-        uniform sampler2D u_texture0; // Output of shader 1
-        uniform sampler2D u_texture1; // Previous frame's output from shader 2
+            // For blurring
+            const float Directions = 8.0;
+            const float Quality = 1.0; // 3 for snowflake
+            const float Radius = 1.0/1200.0; // TODO pass in resolution
+            float pixelCount = 1.0;
 
-        uniform float u_fade_speed;
-        uniform float u_blur_fraction;
+            void main() {
 
-        in vec4 loc; // from the vertex shader, used to compute texture locations
+              // Convert the clip-space coordinates into texture space ones
+              vec2 texcoord = vec2((loc.x+1.0)/2.0, (loc.y+1.0)/2.0); 
+              
+              // Gaussian Blur 
+              vec4 blurred = texture2D(u_texture1, texcoord); // sample the previous frame    
+              for( float d=0.0; d<6.3; d+=6.3/Directions){
+                  for(float i=1.0/Quality; i<=1.0; i+=1.0/Quality){
+                    blurred += texture2D(u_texture1, texcoord+vec2(cos(d),sin(d))*Radius*i); 		
+                    pixelCount += 1.0;
+                   }
+              }
+              blurred /= pixelCount;      
+              
+              vec4 shader1_out = texture2D(u_texture0, texcoord); // The output of shader 1
+              vec4 prev_frame = texture2D(u_texture1, texcoord); // The output of shader 2 (previous frame)
 
-        // for blurring
-        const float Directions = 8.0;
-        const float Quality = 1.0; // 3 for snowflake
-        const float Radius = 1.0/1200.0; // TODO pass in resolution
-        float pixel_count = 1.0;
-
-        void main() {
-            // Convert the clip-space coordinates into texture space ones
-            vec2 texcoord = vec2((loc.x+1.0)/2.0, (loc.y+1.0)/2.0);
-
-            // Gaussian blur
-            vec4 blurred = texture2D(u_texture1, texcoord); // previous frame sample
-            for (float d = 0.0; d < 6.3; d += 6.3 / Directions) {
-                for (float i = 1.0/Quality; i <= 1.0; i += 1.0/Quality) {
-                    blurred += texture2D(u_texture1, texcoord+vec2(cos(d),sin(d))*Radius*i);
-                    pixel_count += 1.0;
-                }
+              // Modify how much blurring by mixing the blurred version with the original
+              blurred = prev_frame*(1.0-u_blur_fraction) + blurred*u_blur_fraction;
+              
+              // The output colour - adding the shader 1 output to the blurred version of the previous frame
+              gl_FragColor = shader1_out + blurred*(1.0-u_fade_speed) - 0.0001;
             }
-            blurred /= pixel_count;
+            "#;
 
-            vec4 shader1_out = texture2D(u_texture0, texcoord); // Output of shader 1
-            vec4 prev_frame = texture2D(u_texture1, texcoord); // Previous frame of shader 2
-
-            // Modify how much blurring by mixing the blurred version with the original
-            blurred = prev_frame*(1.0-u_blur_fraction) + blurred*u_blur_fraction;
-
-            // The output color - adding shader 1 output to the blurred version of previous frame
-            gl_FragColor = shader1_out + blurred*(1.0-u_fade_speed) - 0.0001;
-        }
-    "#;
-
-        glium::Program::from_source(display, vertex_shader_src, fragment_shader_src, None).unwrap()
+        glium::Program::new(
+            display,
+            glium::program::ProgramCreationInput::SourceCode {
+                vertex_shader: vertex_shader_src,
+                fragment_shader: fragment_shader_src,
+                geometry_shader: None,
+                tessellation_control_shader: None,
+                tessellation_evaluation_shader: None,
+                transform_feedback_varyings: None,
+                outputs_srgb: false,
+                uses_point_size: false,
+            },
+        )
+        .unwrap()
     }
 
     fn get_shader_1(display: &glium::Display, preset: Preset) -> glium::Program {
@@ -411,17 +541,17 @@ impl SlimeMould {
 
         let vertex_shader_src = format!(
             r#"
-        #version 150
+        #version 140
         precision highp float;
 
-        in vec4 a_position; // The current position of the vertex
+        attribute vec4 a_position; // The current position of the vertex
         
         uniform sampler2D u_texture1; // The previous frame's output from shader 2
 
         uniform float speed_multiplier;
 
         // Passed to fragment shader
-        out vec4 v_color;
+        varying vec4 v_color;
 
         // TODO: make these uniform inputs?
         const float random_steer_factor = {random_steer_factor};
@@ -517,10 +647,10 @@ impl SlimeMould {
         );
 
         let fragment_shader_src = r#"
-        #version 150
+        #version 140
         precision highp float;
 
-        in vec4 v_color;
+        varying vec4 v_color;
 
         void main() {
             gl_FragColor = v_color;
@@ -555,6 +685,8 @@ impl SlimeMould {
     ) -> (glium::VertexBuffer<Position>, glium::VertexBuffer<Position>) {
         let mut initial_locations = vec![Position::default(); n as usize];
 
+        let pi_times_2_over_n = std::f32::consts::PI * 2.0 / n as f32;
+
         let mut rng = rand::thread_rng();
         for i in 0..n {
             let speed = (rng.gen_range(0.0..1.00) * 0.01 * speed_randomness + 0.01 * initial_speed)
@@ -568,7 +700,8 @@ impl SlimeMould {
                         rng.gen_range(0.0..1.0),  // direction
                     ],
                     StartingArrangement::Ring => {
-                        let a = i as f32 * std::f32::consts::PI * 2.0 / (n as f32 * 4.0); // angle
+                        let a = i as f32 * pi_times_2_over_n; // angle
+
                         let d = 0.7; // distance from center
                         [
                             a.sin() * d,                                      // x
@@ -578,7 +711,7 @@ impl SlimeMould {
                         ]
                     }
                     StartingArrangement::Origin => {
-                        let a = i as f32 * std::f32::consts::PI * 2.0 / (n as f32 * 4.0); // angle
+                        let a = i as f32 * pi_times_2_over_n; // angle
                         [
                             0.0,
                             0.0,
@@ -598,52 +731,46 @@ impl SlimeMould {
 
     pub fn draw(&self, frame: &mut impl glium::Surface, display: &glium::Display) {
         {
-            let target_texture = self.target_texture.borrow();
+            let target_texture = self.target_texture0.borrow();
             let mut framebuffer =
                 glium::framebuffer::SimpleFrameBuffer::new(display, &*target_texture).unwrap();
+            framebuffer.clear_color(0.0, 0.0, 0.0, 1.0);
             self.draw_1(&mut framebuffer, display);
         }
 
         {
-            // Read pixels from target_texture to u_texture0
-            let mut u_texture0 = self.shader_pipeline.u_texture0.borrow_mut();
-            *u_texture0 = glium::texture::Texture2d::new(
-                display,
-                self.target_texture
-                    .borrow()
-                    .read_to_pixel_buffer()
-                    .read_as_texture_2d::<glium::texture::RawImage2d<u8>>()
-                    .unwrap(),
-            )
-            .unwrap();
+            // Swap target_texture with u_texture0
+            std::mem::swap(
+                &mut *self.target_texture0.borrow_mut(),
+                &mut *self.shader_pipeline.u_texture0.borrow_mut(),
+            );
         }
-
-        self.draw_1(frame, display);
 
         self.shader_pipeline
             .buffer_a
             .swap(&self.shader_pipeline.buffer_b);
 
+        frame.clear_color(0.0, 0.0, 0.0, 1.0);
+
+        //self.draw_1(frame, display);
+
         {
-            let target_texture = self.target_texture.borrow();
+            let target_texture = self.target_texture1.borrow();
             let mut framebuffer =
                 glium::framebuffer::SimpleFrameBuffer::new(display, &*target_texture).unwrap();
+            framebuffer.clear_color(0.0, 0.0, 0.0, 1.0);
             self.draw_2(&mut framebuffer, display);
         }
 
         self.draw_2(frame, display);
 
-        // Read pixels from target_texture to u_texture1
-        let mut u_texture1 = self.shader_pipeline.u_texture1.borrow_mut();
-        *u_texture1 = glium::texture::Texture2d::new(
-            display,
-            self.target_texture
-                .borrow()
-                .read_to_pixel_buffer()
-                .read_as_texture_2d::<glium::texture::RawImage2d<u8>>()
-                .unwrap(),
-        )
-        .unwrap();
+        {
+            // Swap target_texture with u_texture1
+            std::mem::swap(
+                &mut *self.target_texture1.borrow_mut(),
+                &mut *self.shader_pipeline.u_texture1.borrow_mut(),
+            );
+        }
     }
 
     pub fn draw_1(&self, frame: &mut impl glium::Surface, display: &glium::Display) {
