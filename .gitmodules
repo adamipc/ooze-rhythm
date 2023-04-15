@@ -1,0 +1,4 @@
+[submodule "glium"]
+	path = glium
+	url = https://github.com/glium/glium.git
+	branch = master
