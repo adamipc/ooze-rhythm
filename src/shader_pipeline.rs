@@ -536,7 +536,7 @@ impl ShaderPipeline {
                     float normalizedDistance = distanceFromCenter / 1.3;
                     float hue = atan(y_new, x_new) / (2.0 * 3.14159) + 0.5;
                     vec3 hsv = vec3(hue, 1.0-normalizedDistance, 1.0);
-                    vec3 rgb = hsv2rgb(hsv); // You'll need to implement the hsv2rgb() function if you haven't already
+                    vec3 rgb = hsv2rgb(hsv); 
                     r = rgb.r;
                     g = rgb.g;
                     b = u_trail_strength;
@@ -552,7 +552,7 @@ impl ShaderPipeline {
 
                 // Color strategy 6: Color oscillation based on time
                 case 6u:
-                    float timeFactor = sin(u_time * 0.5); // u_time is the time variable (you can pass it as a uniform)
+                    float timeFactor = sin(u_time * 0.5);
                     r = 0.5 + 0.5 * sin(2.0 * 3.14159 * (x_new + y_new) + timeFactor);
                     g = 0.5 + 0.5 * sin(2.0 * 3.14159 * (x_new - y_new) + timeFactor);
                     b = u_trail_strength;
