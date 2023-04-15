@@ -63,9 +63,11 @@ impl Distribution<StartingArrangement> for Standard {
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum WallStrategy {
-    Wrap = 0,
-    Bounce = 1,
-    None = 2,
+    None = 0,
+    Wrap = 1,
+    Bounce = 2,
+    BounceRandom = 3,
+    SlowAndReverse = 4,
 }
 
 impl Lerp<f32> for WallStrategy {
@@ -74,9 +76,11 @@ impl Lerp<f32> for WallStrategy {
         let b = other as u32 as f32;
         let result = a.lerp(b, t);
         match result.round() as u32 {
-            0 => WallStrategy::Wrap,
-            1 => WallStrategy::Bounce,
-            2 => WallStrategy::None,
+            0 => WallStrategy::None,
+            1 => WallStrategy::Wrap,
+            2 => WallStrategy::Bounce,
+            3 => WallStrategy::BounceRandom,
+            4 => WallStrategy::SlowAndReverse,
             _ => panic!("Invalid WallStrategy"),
         }
     }
@@ -84,9 +88,14 @@ impl Lerp<f32> for WallStrategy {
 
 impl Distribution<WallStrategy> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> WallStrategy {
-        match rng.gen_range(0..=1) {
-            0 => WallStrategy::Wrap,
-            _ => WallStrategy::Bounce,
+        // TODO: Fix mirror and put it back in rotation
+        match rng.gen_range(1..=4) {
+            0 => WallStrategy::None,
+            1 => WallStrategy::Wrap,
+            2 => WallStrategy::Bounce,
+            3 => WallStrategy::BounceRandom,
+            4 => WallStrategy::SlowAndReverse,
+            _ => panic!("Invalid WallStrategy"),
         }
     }
 }
@@ -97,6 +106,9 @@ pub enum ColorStrategy {
     Speed = 1,
     Position = 2,
     Grey = 3,
+    Hue = 4,
+    Distance = 5,
+    Time = 6,
 }
 
 impl Lerp<f32> for ColorStrategy {
@@ -109,6 +121,9 @@ impl Lerp<f32> for ColorStrategy {
             1 => ColorStrategy::Speed,
             2 => ColorStrategy::Position,
             3 => ColorStrategy::Grey,
+            4 => ColorStrategy::Hue,
+            5 => ColorStrategy::Distance,
+            6 => ColorStrategy::Time,
             _ => panic!("Invalid WallStrategy"),
         }
     }
@@ -116,11 +131,15 @@ impl Lerp<f32> for ColorStrategy {
 
 impl Distribution<ColorStrategy> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> ColorStrategy {
-        match rng.gen_range(0..=3) {
+        match rng.gen_range(0..=6) {
             0 => ColorStrategy::Direction,
             1 => ColorStrategy::Speed,
             2 => ColorStrategy::Position,
-            _ => ColorStrategy::Grey,
+            3 => ColorStrategy::Grey,
+            4 => ColorStrategy::Hue,
+            5 => ColorStrategy::Distance,
+            6 => ColorStrategy::Time,
+            _ => panic!("Invalid WallStrategy"),
         }
     }
 }
@@ -190,7 +209,7 @@ impl Preset {
                 trail_strength: 0.01,
                 search_radius: 0.01,
                 wall_strategy: WallStrategy::Bounce,
-                color_strategy: ColorStrategy::Position,
+                color_strategy: ColorStrategy::Hue,
 
                 fade_speed: 0.01,
                 blurring: 1.0,
@@ -364,7 +383,7 @@ impl Preset {
 impl Distribution<Preset> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Preset {
         Preset {
-            number_of_points: u32::pow(2, rng.gen_range(10..=20)),
+            number_of_points: u32::pow(2, rng.gen_range(14..=20)),
             starting_arrangement: rng.gen(),
             average_starting_speed: rng.gen_range(0.0..=2.0),
             starting_speed_spread: rng.gen_range(0.0..=1.0),

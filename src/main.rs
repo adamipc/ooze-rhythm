@@ -57,7 +57,7 @@ fn main() {
         slime_mould.draw(&mut target, &display, u_time);
         target.finish().unwrap();
 
-        u_time += 0.01;
+        u_time += 0.001;
         slime_mould.update();
 
         let mut action = Action::Continue;

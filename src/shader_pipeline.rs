@@ -242,6 +242,7 @@ impl ShaderPipeline {
             u_fade_speed: preset.fade_speed,
             u_blur_fraction: preset.blurring,
             u_time: u_time,
+            u_max_distance: 1.0f32,
         };
         // Draw the results of shader_2 to the screen
         frame
@@ -373,12 +374,19 @@ impl ShaderPipeline {
         uniform float u_trail_strength;
         uniform float u_vertex_radius;
         uniform float u_search_angle;
+        uniform float u_max_distance;
 
         // Passed to fragment shader
         varying vec4 v_color;
 
         float rand(vec2 co) {
             return fract(sin(dot(co.xy, vec2(12.9898,78.233))) * 43758.5453);
+        }
+
+        vec3 hsv2rgb(vec3 c) {
+            vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+            vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+            return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
         }
 
         void main() {
@@ -439,26 +447,11 @@ impl ShaderPipeline {
             float y_new = a_position.y;
             float x_new = a_position.x;
 
+            float randomAngle = 0.0;
             // Wall strategy
             switch (u_wall_strategy) {
                 case 0u:
-                    // reverse direction if hitting wall
-                    if (y_new + speed*sin(direction) > 0.90) {
-                        float d = atan(sin(direction), cos(direction));
-                        direction -= 2.0*d;
-                    }
-                    if (y_new + speed*sin(direction) < -0.90) {
-                        float d = atan(sin(direction), cos(direction));
-                        direction -= 2.0*d;
-                    }
-                    if (x_new + speed*cos(direction) > 0.90) {
-                        float d = atan(cos(direction), sin(direction));
-                        direction += 2.0*d;
-                    }
-                    if (x_new + speed*cos(direction) < -0.90) {
-                        float d = atan(cos(direction), sin(direction));
-                        direction += 2.0*d;
-                    }
+                    // None
                     break;
                 case 1u:
                     // wrap around
@@ -468,8 +461,41 @@ impl ShaderPipeline {
                     if (x_new > 0.99) { x_new = -0.99; }
                     if (x_new < -0.99) { x_new = 0.99; }
                     break;
+                // BounceRandom
+                case 3u:
+                    randomAngle = rand(texcoord+tex_val.xy)*u_random_steer_factor;
                 case 2u:
-                    // None
+                    // reverse direction if hitting wall
+                    if (y_new + speed*sin(direction) > 0.90) {
+                        float d = atan(sin(direction), cos(direction));
+                        direction -= 2.0*d + randomAngle;
+                    }
+                    if (y_new + speed*sin(direction) < -0.90) {
+                        float d = atan(sin(direction), cos(direction));
+                        direction -= 2.0*d + randomAngle;
+                    }
+                    if (x_new + speed*cos(direction) > 0.90) {
+                        float d = atan(cos(direction), sin(direction));
+                        direction += 2.0*d + randomAngle;
+                    }
+                    if (x_new + speed*cos(direction) < -0.90) {
+                        float d = atan(cos(direction), sin(direction));
+                        direction += 2.0*d + randomAngle;
+                    }
+                    break;
+                // Slow and reverse
+                case 4u:
+                    float boundary = 0.75;
+                    float slowdownFactor = 0.75;
+
+                    if (y_new + speed * sin(direction) > boundary || y_new + speed * sin(direction) < -boundary) {
+                        speed *= slowdownFactor;
+                        direction = 3.14159 - direction;
+                    }
+                    if (x_new + speed * cos(direction) > boundary || x_new + speed * cos(direction) < -boundary) {
+                        speed *= slowdownFactor;
+                        direction = -direction;
+                    }
                     break;
             }
 
@@ -480,28 +506,60 @@ impl ShaderPipeline {
             // Set the color of this vert
             float r = 0.0;
             float g = 0.0;
+            float b = 0.0;
 
             // Color strategy
             switch (u_color_strategy) {
                 case 0u:
                     r = sin(direction);
                     g = cos(direction);
+                    b = u_trail_strength;
                     break;
                 case 1u:
                     r = speed_var*50.0;
                     g = r;
+                    b = u_trail_strength;
                     break;
                 case 2u:
                     r = abs(y_new)/2.0 + 0.5;
                     g = abs(x_new)/2.0 + 0.5;
+                    b = u_trail_strength;
                     break;
                 case 3u:
                     r = u_trail_strength;
                     g = r;
+                    b = r;
+                    break;
+                // Color strategy 4: Hue shifting based on position
+                case 4u:
+                    float distanceFromCenter = sqrt(x_new * x_new + y_new * y_new);
+                    float normalizedDistance = distanceFromCenter / 1.3;
+                    float hue = atan(y_new, x_new) / (2.0 * 3.14159) + 0.5;
+                    vec3 hsv = vec3(hue, 1.0-normalizedDistance, 1.0);
+                    vec3 rgb = hsv2rgb(hsv); // You'll need to implement the hsv2rgb() function if you haven't already
+                    r = rgb.r;
+                    g = rgb.g;
+                    b = u_trail_strength;
+                    break;
+                // Color strategy 5: Gradient based on distance from center
+                case 5u:
+                    distanceFromCenter = sqrt(x_new * x_new + y_new * y_new);
+                    normalizedDistance = distanceFromCenter / 1.3;
+                    r = mix(0.2, 1.0, normalizedDistance);
+                    g = mix(0.5, 1.0, normalizedDistance);
+                    b = u_trail_strength;
+                    break;
+
+                // Color strategy 6: Color oscillation based on time
+                case 6u:
+                    float timeFactor = sin(u_time * 0.5); // u_time is the time variable (you can pass it as a uniform)
+                    r = 0.5 + 0.5 * sin(2.0 * 3.14159 * (x_new + y_new) + timeFactor);
+                    g = 0.5 + 0.5 * sin(2.0 * 3.14159 * (x_new - y_new) + timeFactor);
+                    b = u_trail_strength;
                     break;
             }
 
-            v_color = vec4(r, g, u_trail_strength, 1.0);
+            v_color = vec4(r, g, b, 1.0);
 
             // Send back the position and size
             gl_Position = vec4(x_new, y_new, speed_var/1000.0, 1.0+direction/1000.0);
