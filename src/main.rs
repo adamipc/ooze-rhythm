@@ -57,7 +57,7 @@ fn main() {
         slime_mould.draw(&mut target, &display, u_time);
         target.finish().unwrap();
 
-        u_time += 0.0001;
+        u_time += 0.01;
         slime_mould.update();
 
         let mut action = Action::Continue;
@@ -108,7 +108,10 @@ fn main() {
 
         if number_pressed >= 0 {
             // Load presets
-            slime_mould.set_preset(Preset::new(PresetName::from_u32(number_pressed as u32)));
+            slime_mould.set_preset(
+                Preset::new(PresetName::from_u32(number_pressed as u32)),
+                u_time,
+            );
             slime_mould.reset_points(&display);
         }
 
@@ -171,7 +174,7 @@ fn main() {
 
         // Random preset
         if r_pressed {
-            slime_mould.set_preset(rand::random());
+            slime_mould.set_preset(rand::random(), u_time);
         }
 
         // Regenerate points
