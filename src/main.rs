@@ -1,12 +1,15 @@
 extern crate chrono;
 extern crate glium;
 extern crate image;
+extern crate lerp;
 
 use chrono::Local;
 use glium::glutin::event::{ElementState, Event, StartCause, VirtualKeyCode, WindowEvent};
 use glium::glutin::event_loop::{ControlFlow, EventLoop};
 use glium::glutin::window::Fullscreen;
+use glium::uniforms::{self, Sampler};
 use glium::{glutin, implement_vertex, uniform, Surface};
+use lerp::Lerp;
 use rand::{
     distributions::{Distribution, Standard},
     Rng,
@@ -24,10 +27,12 @@ struct SlimeMould {
     height: u32,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Lerp, PartialEq, Debug, Copy, Clone)]
 struct Preset {
     // Initial config
+    #[lerp(skip)]
     number_of_points: u32,
+    #[lerp(f32)]
     starting_arrangement: StartingArrangement,
     average_starting_speed: f32,
     starting_speed_spread: f32,
@@ -39,7 +44,9 @@ struct Preset {
     constant_steer_factor: f32,
     trail_strength: f32,
     search_radius: f32,
+    #[lerp(f32)]
     wall_strategy: WallStrategy,
+    #[lerp(f32)]
     color_strategy: ColorStrategy,
 
     // Fragment Shader Uniforms
@@ -47,11 +54,25 @@ struct Preset {
     blurring: f32,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 enum StartingArrangement {
     Origin = 0,
     Random = 1,
     Ring = 2,
+}
+
+impl Lerp<f32> for StartingArrangement {
+    fn lerp(self, other: Self, t: f32) -> Self {
+        let a = self as u32 as f32;
+        let b = other as u32 as f32;
+        let result = a.lerp(b, t);
+        match result.round() as u32 {
+            0 => StartingArrangement::Origin,
+            1 => StartingArrangement::Random,
+            2 => StartingArrangement::Ring,
+            _ => panic!("Invalid StartingArrangement"),
+        }
+    }
 }
 
 impl Distribution<StartingArrangement> for Standard {
@@ -64,11 +85,25 @@ impl Distribution<StartingArrangement> for Standard {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 enum WallStrategy {
     Wrap = 0,
     Bounce = 1,
     None = 2,
+}
+
+impl Lerp<f32> for WallStrategy {
+    fn lerp(self, other: Self, t: f32) -> Self {
+        let a = self as u32 as f32;
+        let b = other as u32 as f32;
+        let result = a.lerp(b, t);
+        match result.round() as u32 {
+            0 => WallStrategy::Wrap,
+            1 => WallStrategy::Bounce,
+            2 => WallStrategy::None,
+            _ => panic!("Invalid WallStrategy"),
+        }
+    }
 }
 
 impl Distribution<WallStrategy> for Standard {
@@ -80,12 +115,27 @@ impl Distribution<WallStrategy> for Standard {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 enum ColorStrategy {
     Direction = 0,
     Speed = 1,
     Position = 2,
     Grey = 3,
+}
+
+impl Lerp<f32> for ColorStrategy {
+    fn lerp(self, other: Self, t: f32) -> Self {
+        let a = self as u32 as f32;
+        let b = other as u32 as f32;
+        let result = a.lerp(b, t);
+        match result.round() as u32 {
+            0 => ColorStrategy::Direction,
+            1 => ColorStrategy::Speed,
+            2 => ColorStrategy::Position,
+            3 => ColorStrategy::Grey,
+            _ => panic!("Invalid WallStrategy"),
+        }
+    }
 }
 
 impl Distribution<ColorStrategy> for Standard {
@@ -388,14 +438,16 @@ fn main() {
 
     let mut screenshot_taker = screenshot::AsyncScreenshotTaker::new(5);
 
+    let mut u_time: f32 = 0.0;
     start_loop(event_loop, move |events| {
         screenshot_taker.next_frame();
 
         let mut target = display.draw();
         target.clear_color(0.0, 0.0, 0.0, 1.0);
-        slime_mould.draw(&mut target, &display);
+        slime_mould.draw(&mut target, &display, u_time);
         target.finish().unwrap();
 
+        u_time += 0.0001;
         slime_mould.update();
 
         let mut action = Action::Continue;
@@ -439,7 +491,7 @@ fn main() {
 
         if c_pressed {
             // Clear the textures and buffers
-            slime_mould.reset(&display);
+            slime_mould.clear(&display);
         }
 
         if number_pressed >= 0 {
@@ -652,10 +704,10 @@ where
     let mut next_frame_time = Instant::now();
     event_loop.run(move |event, _, control_flow| {
         let run_callback = match event.to_static() {
-            Some(Event::NewEvents(cause)) => match cause {
-                StartCause::ResumeTimeReached { .. } | StartCause::Init => true,
-                _ => false,
-            },
+            Some(Event::NewEvents(cause)) => matches!(
+                cause,
+                StartCause::ResumeTimeReached { .. } | StartCause::Init
+            ),
             Some(event) => {
                 events_buffer.push(event);
                 false
@@ -809,16 +861,8 @@ impl ShaderPipeline {
         u_texture1.swap(&self.u_texture1);
     }
 
-    pub fn reset(&mut self, display: &glium::Display, preset: Preset, width: u32, height: u32) {
+    pub fn clear(&mut self, display: &glium::Display, width: u32, height: u32) {
         self.clear_textures(display, width, height);
-
-        self.reset_points(
-            display,
-            preset.number_of_points,
-            preset.starting_arrangement,
-            preset.average_starting_speed,
-            preset.starting_speed_spread,
-        );
     }
 
     fn get_initial_locations(
@@ -883,6 +927,8 @@ impl ShaderPipeline {
         
         uniform sampler2D u_texture1; // The previous frame's output from shader 2
 
+        uniform float u_time;
+
         uniform float u_speed_multiplier;
         uniform uint u_wall_strategy;
         uniform uint u_color_strategy;
@@ -895,8 +941,6 @@ impl ShaderPipeline {
 
         // Passed to fragment shader
         varying vec4 v_color;
-
-        // TODO: make these uniform inputs?
 
         float rand(vec2 co) {
             return fract(sin(dot(co.xy, vec2(12.9898,78.233))) * 43758.5453);
@@ -1044,7 +1088,7 @@ impl ShaderPipeline {
         glium::Program::new(
             display,
             glium::program::ProgramCreationInput::SourceCode {
-                vertex_shader: &vertex_shader_src[..],
+                vertex_shader: vertex_shader_src,
                 fragment_shader: fragment_shader_src,
                 geometry_shader: None,
                 tessellation_control_shader: None,
@@ -1066,9 +1110,10 @@ impl ShaderPipeline {
         attribute vec2 a_vertex;
         
         varying vec4 loc; // location in clip space
+        uniform float u_time;
 
         void main(void) {
-            gl_Position = vec4(a_vertex, 0.0, 1.0);
+            gl_Position = vec4(a_vertex.x, a_vertex.y, 0.0, 1.0);
             loc = gl_Position; // pass to frag shader
         }
     "#;
@@ -1080,6 +1125,9 @@ impl ShaderPipeline {
             uniform sampler2D u_texture1; // A texture input - the previous frame's output from shader 2
             uniform float u_fade_speed; // TODO
             uniform float u_blur_fraction; // TODO
+
+            uniform float u_time;
+
             varying vec4 loc; // from the vertex shader, used to compute texture locations
 
             // For blurring
@@ -1183,9 +1231,8 @@ impl SlimeMould {
         }
     }
 
-    pub fn reset(&mut self, display: &glium::Display) {
-        self.shader_pipeline
-            .reset(display, self.preset, self.width, self.height);
+    pub fn clear(&mut self, display: &glium::Display) {
+        self.shader_pipeline.clear(display, self.width, self.height);
     }
 
     pub fn set_preset(&mut self, preset: Preset) {
@@ -1204,13 +1251,13 @@ impl SlimeMould {
 
     pub fn update(&mut self) {}
 
-    pub fn draw(&self, frame: &mut impl glium::Surface, display: &glium::Display) {
+    pub fn draw(&self, frame: &mut impl glium::Surface, display: &glium::Display, u_time: f32) {
         {
             let target_texture = self.target_texture0.borrow();
             let mut framebuffer =
                 glium::framebuffer::SimpleFrameBuffer::new(display, &*target_texture).unwrap();
             framebuffer.clear_color(0.0, 0.0, 0.0, 1.0);
-            self.draw_1(&mut framebuffer, display);
+            self.draw_1(&mut framebuffer, display, u_time);
         }
 
         {
@@ -1227,17 +1274,17 @@ impl SlimeMould {
 
         frame.clear_color(0.0, 0.0, 0.0, 1.0);
 
-        //self.draw_1(frame, display);
+        //self.draw_1(frame, display, u_time);
 
         {
             let target_texture = self.target_texture1.borrow();
             let mut framebuffer =
                 glium::framebuffer::SimpleFrameBuffer::new(display, &*target_texture).unwrap();
             framebuffer.clear_color(0.0, 0.0, 0.0, 1.0);
-            self.draw_2(&mut framebuffer, display);
+            self.draw_2(&mut framebuffer, display, u_time);
         }
 
-        self.draw_2(frame, display);
+        self.draw_2(frame, display, u_time);
 
         {
             // Swap target_texture with u_texture1
@@ -1248,7 +1295,7 @@ impl SlimeMould {
         }
     }
 
-    pub fn draw_1(&self, frame: &mut impl glium::Surface, display: &glium::Display) {
+    pub fn draw_1(&self, frame: &mut impl glium::Surface, display: &glium::Display, u_time: f32) {
         {
             let mut buffer_b = self.shader_pipeline.buffer_b.borrow_mut();
             let session = glium::vertex::TransformFeedbackSession::new(
@@ -1262,7 +1309,7 @@ impl SlimeMould {
 
             let u_texture1 = &*self.shader_pipeline.u_texture1.borrow();
             let uniforms = uniform! {
-                u_texture1: u_texture1,
+                u_texture1: Sampler::new(u_texture1).wrap_function(uniforms::SamplerWrapFunction::Repeat),
                 u_speed_multiplier: self.preset.speed_multiplier,
                 u_wall_strategy: self.preset.wall_strategy as u8,
                 u_color_strategy: self.preset.color_strategy as u8,
@@ -1272,6 +1319,7 @@ impl SlimeMould {
                 u_trail_strength: self.preset.trail_strength,
                 u_vertex_radius: self.preset.point_size,
                 u_search_angle: 0.2f32,
+                u_time: u_time,
             };
 
             // Draw shader_1 to the frame
@@ -1287,14 +1335,15 @@ impl SlimeMould {
         }
     }
 
-    pub fn draw_2(&self, frame: &mut impl glium::Surface, _display: &glium::Display) {
+    pub fn draw_2(&self, frame: &mut impl glium::Surface, _display: &glium::Display, u_time: f32) {
         let u_texture0 = &*self.shader_pipeline.u_texture0.borrow();
         let u_texture1 = &*self.shader_pipeline.u_texture1.borrow();
         let uniforms = uniform! {
-            u_texture0: u_texture0,
-            u_texture1: u_texture1,
+            u_texture0: Sampler::new(u_texture0).wrap_function(uniforms::SamplerWrapFunction::Repeat),
+            u_texture1: Sampler::new(u_texture1).wrap_function(uniforms::SamplerWrapFunction::Repeat),
             u_fade_speed: self.preset.fade_speed,
             u_blur_fraction: self.preset.blurring,
+            u_time: u_time,
         };
         // Draw the results of shader_2 to the screen
         frame
