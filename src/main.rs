@@ -1,153 +1,20 @@
-extern crate chrono;
-extern crate glium;
-extern crate image;
-extern crate lerp;
-extern crate midir;
-
 use crate::preset::{Preset, PresetName};
 use chrono::Local;
 use glium::glutin::event::{ElementState, Event, StartCause, VirtualKeyCode, WindowEvent};
 use glium::glutin::event_loop::{ControlFlow, EventLoop};
 use glium::glutin::window::Fullscreen;
 use glium::{glutin, Surface};
-use midir::{Ignore, MidiInput};
-use std::sync::mpsc::sync_channel;
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub mod midi;
 pub mod preset;
+pub mod screenshot;
 pub mod shader_pipeline;
 pub mod slime_mould;
 
-const MAX_MIDI: usize = 3;
-
-#[derive(Copy, Clone)]
-struct MidiCopy {
-    len: usize,
-    data: [u8; MAX_MIDI],
-    time: u64,
-}
-
-impl std::fmt::Debug for MidiCopy {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "Midi {{ time: {}, len: {}, data: {:?} }}",
-            self.time,
-            self.len,
-            &self.data[..self.len]
-        )
-    }
-}
-
-// Pad 0-47, Knob 0-5
-// Velocity 0-127
-// Knob value 0-127
-// Time u64
-#[derive(Debug, Copy, Clone)]
-enum Mpd218Message {
-    PadPressed(u8, u8, u64),
-    PadHeld(u8, u8, u64),
-    PadReleased(u8, u8, u64),
-    KnobChanged(u8, u8, u64),
-    Unknown([u8; MAX_MIDI], u64),
-}
-
-fn setup_midi_input(sender: std::sync::mpsc::SyncSender<Mpd218Message>) {
-    let mut midi_in = MidiInput::new("midir reading input").unwrap();
-    midi_in.ignore(Ignore::None);
-
-    let in_ports = midi_in.ports();
-    let in_port = match in_ports.len() {
-        0 => {
-            println!("no midi input port found");
-            return;
-        }
-        1 => {
-            println!(
-                "Choosing the only available input port: {}",
-                midi_in.port_name(&in_ports[0]).unwrap()
-            );
-            &in_ports[0]
-        }
-        _ => &in_ports[in_ports.len() - 1],
-    };
-
-    println!("\nOpening connection");
-    let in_port_name = midi_in.port_name(in_port).unwrap();
-
-    let mut last_pad = -1;
-
-    let _conn_in = midi_in.connect(
-        in_port,
-        "midir-read-input",
-        move |time, message, _| {
-            let len = std::cmp::min(MAX_MIDI, message.len());
-            let mut data = [0; MAX_MIDI];
-            data[..len].copy_from_slice(&message[..len]);
-            // data[0] == 153 // pad pressed
-            // data[0] == 217 // pad held
-            // data[0] == 137 // pad released
-            // data[0] == 176 // knob turned
-            // data[1] for pads is 36-84
-            // data[1] for knobs is 0-127
-            // pad number is not passed when held so velocity is in data[1]
-            // held data is only supplied for first pad held
-            // and pad number is in last_pad
-            // Knobs are 3,9, 12-27
-            //
-            let mpd218_message = match data[0] {
-                153 => {
-                    let pad = data[1] - 36;
-                    let velocity = data[2];
-                    if last_pad == -1 {
-                        last_pad = pad as i8;
-                    }
-                    //println!("Pad {} pressed with velocity {}", pad, velocity);
-                    Mpd218Message::PadPressed(pad, velocity, time)
-                }
-                217 => {
-                    let pad = last_pad as u8;
-                    let velocity = data[1];
-                    //println!("Pad {} held with velocity {}", pad, velocity);
-                    Mpd218Message::PadHeld(pad, velocity, time)
-                }
-                137 => {
-                    let pad = data[1] - 36;
-                    let velocity = data[2];
-                    last_pad = -1;
-                    //println!("Pad {} released with velocity {}", pad, velocity);
-                    Mpd218Message::PadReleased(pad, velocity, time)
-                }
-                176 => {
-                    let mut knob = data[1] - 3;
-                    if knob > 0 {
-                        knob -= 5;
-                    }
-                    if knob > 1 {
-                        knob -= 2;
-                    }
-                    let value = data[2];
-                    //println!("Knob {} value {}", knob, value);
-                    Mpd218Message::KnobChanged(knob, value, time)
-                }
-                _ => {
-                    println!("Unknown message: {:?}", data);
-                    Mpd218Message::Unknown(data, time)
-                }
-            };
-            sender.send(mpd218_message).unwrap();
-        },
-        (),
-    );
-
-    println!("Connection open, reading input from '{}'.", in_port_name);
-}
-
 fn main() {
-    let (sender, receiver) = sync_channel(64);
-
-    setup_midi_input(sender);
+    let midi_channel = midi::MidiChannel::new();
 
     // 1. The **winit::EventsLoop** for handling events.
     let event_loop = glutin::event_loop::EventLoop::new();
@@ -172,8 +39,10 @@ fn main() {
     //    and register the window with the event_loop.
     let display = glium::Display::new(wb, cb, &event_loop).unwrap();
 
+    // Start out with a randomized preset
     let preset = rand::random();
 
+    // Create our slime mould simulation
     let mut slime_mould = slime_mould::SlimeMould::new(&display, width, height, preset);
 
     let mut fullscreen = false;
@@ -234,10 +103,10 @@ fn main() {
         }
 
         // Midi receiver
-        while let Ok(m) = receiver.try_recv() {
+        for m in midi_channel.try_iter() {
             //println!("{m:?}");
             match m {
-                Mpd218Message::PadPressed(pad, _velocity, _time) => {
+                midi::Mpd218Message::PadPressed(pad, _velocity, _time) => {
                     if pad <= 9 {
                         number_pressed = pad as i32;
                     } else {
@@ -336,130 +205,6 @@ fn main() {
 
         action
     });
-}
-
-mod screenshot {
-    use glium::Surface;
-    use std::borrow::Cow;
-    use std::collections::VecDeque;
-    use std::vec::Vec;
-
-    // Container that holds image data as vector of (u8, u8, u8, u8).
-    // This is used to take data from PixelBuffer and move it to another thread
-    // with minimum conversions done on main thread.
-    pub struct RGBAImageData {
-        pub data: Vec<(u8, u8, u8, u8)>,
-        pub width: u32,
-        pub height: u32,
-    }
-
-    impl glium::texture::Texture2dDataSink<(u8, u8, u8, u8)> for RGBAImageData {
-        fn from_raw(data: Cow<'_, [(u8, u8, u8, u8)]>, width: u32, height: u32) -> Self {
-            RGBAImageData {
-                data: data.into_owned(),
-                width,
-                height,
-            }
-        }
-    }
-
-    struct AsyncScreenshotTask {
-        pub target_frame: u64,
-        pub pixel_buffer: glium::texture::pixel_buffer::PixelBuffer<(u8, u8, u8, u8)>,
-    }
-
-    impl AsyncScreenshotTask {
-        fn new(facade: &dyn glium::backend::Facade, target_frame: u64) -> Self {
-            // Get information about current framebuffer
-            let dimensions = facade.get_context().get_framebuffer_dimensions();
-            let rect = glium::Rect {
-                left: 0,
-                bottom: 0,
-                width: dimensions.0,
-                height: dimensions.1,
-            };
-            let blit_target = glium::BlitTarget {
-                left: 0,
-                bottom: 0,
-                width: dimensions.0 as i32,
-                height: dimensions.1 as i32,
-            };
-
-            // Create temporary texture and blit the front buffer to it
-            let texture =
-                glium::texture::Texture2d::empty(facade, dimensions.0, dimensions.1).unwrap();
-            let framebuffer = glium::framebuffer::SimpleFrameBuffer::new(facade, &texture).unwrap();
-            framebuffer.blit_from_frame(
-                &rect,
-                &blit_target,
-                glium::uniforms::MagnifySamplerFilter::Nearest,
-            );
-
-            // Read the texture into new pixel buffer
-            let pixel_buffer = texture.read_to_pixel_buffer();
-
-            AsyncScreenshotTask {
-                target_frame,
-                pixel_buffer,
-            }
-        }
-
-        fn read_image_data(self) -> RGBAImageData {
-            self.pixel_buffer.read_as_texture_2d().unwrap()
-        }
-    }
-
-    pub struct ScreenshotIterator<'a>(&'a mut AsyncScreenshotTaker);
-
-    impl<'a> Iterator for ScreenshotIterator<'a> {
-        type Item = RGBAImageData;
-
-        fn next(&mut self) -> Option<RGBAImageData> {
-            if self
-                .0
-                .screenshot_tasks
-                .front()
-                .map(|task| task.target_frame)
-                == Some(self.0.frame)
-            {
-                let task = self.0.screenshot_tasks.pop_front().unwrap();
-                Some(task.read_image_data())
-            } else {
-                None
-            }
-        }
-    }
-
-    pub struct AsyncScreenshotTaker {
-        screenshot_delay: u64,
-        frame: u64,
-        screenshot_tasks: VecDeque<AsyncScreenshotTask>,
-    }
-
-    impl AsyncScreenshotTaker {
-        pub fn new(screenshot_delay: u64) -> Self {
-            AsyncScreenshotTaker {
-                screenshot_delay,
-                frame: 0,
-                screenshot_tasks: VecDeque::new(),
-            }
-        }
-
-        pub fn next_frame(&mut self) {
-            self.frame += 1;
-        }
-
-        pub fn pickup_screenshots(&mut self) -> ScreenshotIterator<'_> {
-            ScreenshotIterator(self)
-        }
-
-        pub fn take_screenshot(&mut self, facade: &dyn glium::backend::Facade) {
-            self.screenshot_tasks.push_back(AsyncScreenshotTask::new(
-                facade,
-                self.frame + self.screenshot_delay,
-            ));
-        }
-    }
 }
 
 pub enum Action {
