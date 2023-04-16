@@ -10,5 +10,6 @@ chrono = "0.4.24"
 glium = "0.32.1"
 image = "0.24.6"
 lerp = { version = "0.4.0", features = ["derive"] }
+midir = { version = "0.9.1", features = ["winrt"] }
 rand = "0.8.5"
 

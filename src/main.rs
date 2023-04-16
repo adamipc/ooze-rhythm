@@ -2,6 +2,7 @@ extern crate chrono;
 extern crate glium;
 extern crate image;
 extern crate lerp;
+extern crate midir;
 
 use crate::preset::{Preset, PresetName};
 use chrono::Local;
@@ -9,6 +10,8 @@ use glium::glutin::event::{ElementState, Event, StartCause, VirtualKeyCode, Wind
 use glium::glutin::event_loop::{ControlFlow, EventLoop};
 use glium::glutin::window::Fullscreen;
 use glium::{glutin, Surface};
+use midir::{Ignore, MidiInput};
+use std::sync::mpsc::sync_channel;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -16,7 +19,136 @@ pub mod preset;
 pub mod shader_pipeline;
 pub mod slime_mould;
 
+const MAX_MIDI: usize = 3;
+
+#[derive(Copy, Clone)]
+struct MidiCopy {
+    len: usize,
+    data: [u8; MAX_MIDI],
+    time: u64,
+}
+
+impl std::fmt::Debug for MidiCopy {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "Midi {{ time: {}, len: {}, data: {:?} }}",
+            self.time,
+            self.len,
+            &self.data[..self.len]
+        )
+    }
+}
+
+// Pad 0-47, Knob 0-5
+// Velocity 0-127
+// Knob value 0-127
+// Time u64
+#[derive(Debug, Copy, Clone)]
+enum Mpd218Message {
+    PadPressed(u8, u8, u64),
+    PadHeld(u8, u8, u64),
+    PadReleased(u8, u8, u64),
+    KnobChanged(u8, u8, u64),
+    Unknown([u8; MAX_MIDI], u64),
+}
+
+fn setup_midi_input(sender: std::sync::mpsc::SyncSender<Mpd218Message>) {
+    let mut midi_in = MidiInput::new("midir reading input").unwrap();
+    midi_in.ignore(Ignore::None);
+
+    let in_ports = midi_in.ports();
+    let in_port = match in_ports.len() {
+        0 => {
+            println!("no midi input port found");
+            return;
+        }
+        1 => {
+            println!(
+                "Choosing the only available input port: {}",
+                midi_in.port_name(&in_ports[0]).unwrap()
+            );
+            &in_ports[0]
+        }
+        _ => &in_ports[in_ports.len() - 1],
+    };
+
+    println!("\nOpening connection");
+    let in_port_name = midi_in.port_name(in_port).unwrap();
+
+    let mut last_pad = -1;
+
+    let _conn_in = midi_in.connect(
+        in_port,
+        "midir-read-input",
+        move |time, message, _| {
+            let len = std::cmp::min(MAX_MIDI, message.len());
+            let mut data = [0; MAX_MIDI];
+            data[..len].copy_from_slice(&message[..len]);
+            // data[0] == 153 // pad pressed
+            // data[0] == 217 // pad held
+            // data[0] == 137 // pad released
+            // data[0] == 176 // knob turned
+            // data[1] for pads is 36-84
+            // data[1] for knobs is 0-127
+            // pad number is not passed when held so velocity is in data[1]
+            // held data is only supplied for first pad held
+            // and pad number is in last_pad
+            // Knobs are 3,9, 12-27
+            //
+            let mpd218_message = match data[0] {
+                153 => {
+                    let pad = data[1] - 36;
+                    let velocity = data[2];
+                    if last_pad == -1 {
+                        last_pad = pad as i8;
+                    }
+                    //println!("Pad {} pressed with velocity {}", pad, velocity);
+                    Mpd218Message::PadPressed(pad, velocity, time)
+                }
+                217 => {
+                    let pad = last_pad as u8;
+                    let velocity = data[1];
+                    //println!("Pad {} held with velocity {}", pad, velocity);
+                    Mpd218Message::PadHeld(pad, velocity, time)
+                }
+                137 => {
+                    let pad = data[1] - 36;
+                    let velocity = data[2];
+                    last_pad = -1;
+                    //println!("Pad {} released with velocity {}", pad, velocity);
+                    Mpd218Message::PadReleased(pad, velocity, time)
+                }
+                176 => {
+                    let mut knob = data[1] - 3;
+                    if knob > 0 {
+                        knob -= 5;
+                    }
+                    if knob > 1 {
+                        knob -= 2;
+                    }
+                    let value = data[2];
+                    //println!("Knob {} value {}", knob, value);
+                    Mpd218Message::KnobChanged(knob, value, time)
+                }
+                _ => {
+                    println!("Unknown message: {:?}", data);
+                    Mpd218Message::Unknown(data, time)
+                }
+            };
+            sender.send(mpd218_message).unwrap();
+        },
+        (),
+    );
+
+    println!("Connection open, reading input from '{}'.", in_port_name);
+}
+
 fn main() {
+    let (sender, receiver) = sync_channel(64);
+
+    setup_midi_input(sender);
+
     // 1. The **winit::EventsLoop** for handling events.
     let event_loop = glutin::event_loop::EventLoop::new();
 
@@ -98,6 +230,26 @@ fn main() {
                         _ => (),
                     }
                 }
+            }
+        }
+
+        // Midi receiver
+        while let Ok(m) = receiver.try_recv() {
+            //println!("{m:?}");
+            match m {
+                Mpd218Message::PadPressed(pad, _velocity, _time) => {
+                    if pad <= 9 {
+                        number_pressed = pad as i32;
+                    } else {
+                        match pad {
+                            10 => c_pressed = true,
+                            11 => p_pressed = true,
+                            12 => r_pressed = true,
+                            _ => (),
+                        }
+                    }
+                }
+                _ => (),
             }
         }
 
