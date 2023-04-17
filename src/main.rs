@@ -22,6 +22,9 @@ pub mod beat {
     use std::io::stdin;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::time::Instant;
+    use yata::methods::EMA;
+    use yata::prelude::*;
 
     pub struct BeatDetector {}
 
@@ -32,7 +35,7 @@ pub mod beat {
 
         pub fn start_listening(
             &self,
-            mut callback: impl FnMut(BeatInfo) + Sync + Send + 'static,
+            mut callback: impl FnMut((BeatInfo, f64)) + Sync + Send + 'static,
         ) -> impl FnOnce() -> () + Send + 'static {
             let recording = Arc::new(AtomicBool::new(true));
             let recording_cpy = recording.clone();
@@ -45,7 +48,7 @@ pub mod beat {
             let available_hosts = cpal::available_hosts();
             println!("Available hosts:\n {:?}", available_hosts);
 
-            let mut host = cpal::default_host();
+            let host = cpal::default_host();
             for host_id in available_hosts {
                 println!("Host: {:?}", host_id.name());
                 if host_id.name() == "ASIO" {
@@ -89,8 +92,20 @@ pub mod beat {
 
             let strategy = StrategyKind::Spectrum;
 
+            let mut ema = EMA::new(32, &500.0).unwrap();
+
+            let mut last_beat = Instant::now();
             let on_beat = move |info: BeatInfo| {
-                callback(info);
+                // beat detectors relative_ms is unreliable, since we
+                // are reading live audio data just use the current time
+                let current_beat = Instant::now();
+                let time_since_last_beat = (current_beat - last_beat).as_millis() as f64;
+                let ema_result = ema.next(&time_since_last_beat);
+
+                last_beat = current_beat;
+                //        println!("EMA: {ema_result} BPM: {}", 60_000.0 / ema_result);
+                //        println!("Beat detected: {:?}", info,);
+                callback((info, 60_000.0 / ema_result));
             };
             let _ = beat_detector::record::start_listening(on_beat, Some(dev), strategy, recording)
                 .unwrap();
@@ -123,30 +138,15 @@ pub mod beat {
     }
 }
 
-use yata::methods::EMA;
-use yata::prelude::*;
-
 fn main() {
     let midi_channel = midi::MidiChannel::new();
 
     let beat_detector = beat::BeatDetector::new();
 
-    let mut ema = EMA::new(32, &500.0).unwrap();
-
     let (beat_sender, beat_receiver) = sync_channel(64);
 
-    let mut last_beat = Instant::now();
-    let _ = beat_detector.start_listening(move |info| {
-        // beat detectors relative_ms is unreliable, since we
-        // are reading live audio data just use the current time
-        let current_beat = Instant::now();
-        let time_since_last_beat = (current_beat - last_beat).as_millis() as f64;
-        let ema_result = ema.next(&time_since_last_beat);
-
-        last_beat = current_beat;
-        //        println!("EMA: {ema_result} BPM: {}", 60_000.0 / ema_result);
-        //        println!("Beat detected: {:?}", info,);
-        beat_sender.send(ema_result).unwrap();
+    let _ = beat_detector.start_listening(move |(_, bpm)| {
+        beat_sender.send(bpm).unwrap();
     });
 
     // 1. The **winit::EventsLoop** for handling events.
@@ -192,8 +192,9 @@ fn main() {
         screenshot_taker.next_frame();
 
         let mut got_beat = false;
-        for _ in beat_receiver.try_iter() {
+        for bpm in beat_receiver.try_iter() {
             got_beat = true;
+            println!("Got beat: {bpm}");
         }
 
         let mut target = display.draw();
