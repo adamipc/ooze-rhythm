@@ -130,12 +130,14 @@ impl ShaderPipeline {
         preset: Preset,
         old_preset: Preset,
         lerp_start: f32,
+        lerp_length: f32,
         u_time: f32,
     ) {
-        let lerp_now = u_time - lerp_start;
-        let lerp_preset = lerp_now < 1.0;
+        let lerp_now = (u_time - lerp_start).abs();
+        //println!("u_time: {u_time} lerp_start: {lerp_start} lerp_now: {lerp_now}");
+        let lerp_preset = lerp_now < lerp_length;
         let preset = if lerp_preset {
-            old_preset.lerp(preset, lerp_now)
+            old_preset.lerp(preset, lerp_now / lerp_length)
         } else {
             preset
         };

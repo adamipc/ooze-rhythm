@@ -4,6 +4,7 @@ use glium::glutin::event::{ElementState, Event, StartCause, VirtualKeyCode, Wind
 use glium::glutin::event_loop::{ControlFlow, EventLoop};
 use glium::glutin::window::Fullscreen;
 use glium::{glutin, Surface};
+use std::sync::mpsc::sync_channel;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -13,8 +14,140 @@ pub mod screenshot;
 pub mod shader_pipeline;
 pub mod slime_mould;
 
+pub mod beat {
+    use beat_detector::{BeatInfo, StrategyKind};
+    use cpal::traits::{DeviceTrait, HostTrait};
+    use cpal::Device;
+    use std::collections::BTreeMap;
+    use std::io::stdin;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    pub struct BeatDetector {}
+
+    impl BeatDetector {
+        pub fn new() -> Self {
+            BeatDetector {}
+        }
+
+        pub fn start_listening(
+            &self,
+            mut callback: impl FnMut(BeatInfo) + Sync + Send + 'static,
+        ) -> impl FnOnce() -> () + Send + 'static {
+            let recording = Arc::new(AtomicBool::new(true));
+            let recording_cpy = recording.clone();
+
+            let exit_callback = move || {
+                recording_cpy.store(false, Ordering::SeqCst);
+            };
+
+            println!("Supported hosts:\n {:?}", cpal::ALL_HOSTS);
+            let available_hosts = cpal::available_hosts();
+            println!("Available hosts:\n {:?}", available_hosts);
+
+            let mut host = cpal::default_host();
+            for host_id in available_hosts {
+                println!("Host: {:?}", host_id.name());
+                if host_id.name() == "ASIO" {
+                    //println!("Using Asio host");
+                    //host = cpal::host_from_id(host_id).unwrap();
+                }
+            }
+
+            let mut devs = BTreeMap::new();
+            for (i, dev) in host.input_devices().unwrap().enumerate() {
+                devs.insert(dev.name().unwrap_or(format!("Unknown device #{}", i)), dev);
+            }
+            if devs.is_empty() {
+                println!("No audio input devices found");
+                return exit_callback;
+            }
+
+            let dev = if devs.len() > 1 {
+                Self::select_input_device(devs)
+            } else {
+                devs.into_iter().next().unwrap().1
+            };
+
+            // Input configs
+            if let Ok(conf) = dev.default_input_config() {
+                println!("    Default input stream config:\n      {:?}", conf);
+            }
+            let input_configs = match dev.supported_input_configs() {
+                Ok(f) => f.collect(),
+                Err(e) => {
+                    println!("    Error getting supported input configs: {:?}", e);
+                    Vec::new()
+                }
+            };
+            if !input_configs.is_empty() {
+                println!("    All supported input stream configs:");
+                for (config_index, config) in input_configs.into_iter().enumerate() {
+                    println!("      {}. {:?}", config_index, config);
+                }
+            }
+
+            let strategy = StrategyKind::Spectrum;
+
+            let on_beat = move |info: BeatInfo| {
+                callback(info);
+            };
+            let _ = beat_detector::record::start_listening(on_beat, Some(dev), strategy, recording)
+                .unwrap();
+
+            exit_callback
+        }
+
+        fn select_input_device(devs: BTreeMap<String, Device>) -> Device {
+            println!("Available audio devices:");
+            for (i, (name, _)) in devs.iter().enumerate() {
+                println!(" [{}] {}", i, name);
+            }
+
+            println!("Select audio device: input device number and enter:");
+            let mut input = String::new();
+            while stdin().read_line(&mut input).unwrap() == 0 {}
+            let input = input
+                .trim()
+                .parse::<u8>()
+                .expect("Input must be a valid number!");
+
+            devs.into_iter()
+                .enumerate()
+                .filter(|(i, _)| *i == input as usize)
+                .map(|(_i, (_name, dev))| dev)
+                .take(1)
+                .next()
+                .unwrap()
+        }
+    }
+}
+
+use yata::methods::EMA;
+use yata::prelude::*;
+
 fn main() {
     let midi_channel = midi::MidiChannel::new();
+
+    let beat_detector = beat::BeatDetector::new();
+
+    let mut ema = EMA::new(32, &500.0).unwrap();
+
+    let (beat_sender, beat_receiver) = sync_channel(64);
+
+    let mut last_beat = Instant::now();
+    let _ = beat_detector.start_listening(move |info| {
+        // beat detectors relative_ms is unreliable, since we
+        // are reading live audio data just use the current time
+        let current_beat = Instant::now();
+        let time_since_last_beat = (current_beat - last_beat).as_millis() as f64;
+        let ema_result = ema.next(&time_since_last_beat);
+
+        last_beat = current_beat;
+        //        println!("EMA: {ema_result} BPM: {}", 60_000.0 / ema_result);
+        //        println!("Beat detected: {:?}", info,);
+        beat_sender.send(ema_result).unwrap();
+    });
 
     // 1. The **winit::EventsLoop** for handling events.
     let event_loop = glutin::event_loop::EventLoop::new();
@@ -49,16 +182,28 @@ fn main() {
 
     let mut screenshot_taker = screenshot::AsyncScreenshotTaker::new(5);
 
+    let mut beat_preset: preset::Preset = rand::random();
+    let mut non_beat_preset = preset;
+
     let mut u_time: f32 = 0.0;
+    let mut u_time_takeover = false;
+    let mut beat_start_time = u_time;
     start_loop(event_loop, move |events| {
         screenshot_taker.next_frame();
+
+        let mut got_beat = false;
+        for _ in beat_receiver.try_iter() {
+            got_beat = true;
+        }
 
         let mut target = display.draw();
         target.clear_color(0.0, 0.0, 0.0, 1.0);
         slime_mould.draw(&mut target, &display, u_time);
         target.finish().unwrap();
 
-        u_time += 0.001;
+        if !u_time_takeover {
+            u_time += 0.02;
+        }
         slime_mould.update();
 
         let mut action = Action::Continue;
@@ -104,9 +249,9 @@ fn main() {
 
         // Midi receiver
         for m in midi_channel.try_iter() {
-            //println!("{m:?}");
+            println!("{m:?}");
             match m {
-                midi::Mpd218Message::PadPressed(pad, _velocity, _time) => {
+                midi::Mpd218Message::PadPressed(pad, _velocity, _) => {
                     if pad <= 9 {
                         number_pressed = pad as i32;
                     } else {
@@ -114,12 +259,31 @@ fn main() {
                             10 => c_pressed = true,
                             11 => p_pressed = true,
                             12 => r_pressed = true,
+                            13 => beat_preset = rand::random(),
                             _ => (),
                         }
                     }
                 }
+                midi::Mpd218Message::KnobChanged(knob, value, _) => {
+                    if knob == 0 {
+                        u_time = value as f32 / 127.0;
+                        //println!("value: {value} u_time: {u_time}");
+                        u_time_takeover = true;
+                    }
+                }
                 _ => (),
             }
+        }
+
+        // Random preset
+        if r_pressed {
+            slime_mould.transition_preset(slime_mould.get_preset(), rand::random(), u_time, 1.0);
+            u_time_takeover = false;
+        }
+
+        // Regenerate points
+        if p_pressed {
+            slime_mould.reset_points(&display);
         }
 
         if c_pressed {
@@ -129,17 +293,33 @@ fn main() {
 
         if number_pressed >= 0 {
             // Load presets
-            slime_mould.set_preset(
+            slime_mould.transition_preset(
+                slime_mould.get_preset(),
                 Preset::new(PresetName::from_u32(number_pressed as u32)),
                 u_time,
+                1.0,
             );
             slime_mould.reset_points(&display);
+            u_time_takeover = false;
         }
 
         if s_pressed {
             slime_mould.save_preset();
         }
 
+        // /*
+        if got_beat {
+            beat_start_time = u_time;
+            non_beat_preset = slime_mould.get_preset();
+            slime_mould.transition_preset(non_beat_preset, beat_preset, u_time, 0.2);
+        } else {
+            if beat_start_time > 0.0 {
+                if (u_time - beat_start_time) > 0.2 {
+                    slime_mould.transition_preset(beat_preset, non_beat_preset, u_time, 0.1);
+                    beat_start_time = -1.0;
+                }
+            }
+        } // */
         if backspace_pressed {
             println!("Taking screenshot...");
             screenshot_taker.take_screenshot(&display);
@@ -191,16 +371,6 @@ fn main() {
 
         if escape_pressed {
             action = Action::Stop;
-        }
-
-        // Random preset
-        if r_pressed {
-            slime_mould.set_preset(rand::random(), u_time);
-        }
-
-        // Regenerate points
-        if p_pressed {
-            slime_mould.reset_points(&display);
         }
 
         action

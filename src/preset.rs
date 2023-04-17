@@ -46,7 +46,7 @@ impl Lerp<f32> for StartingArrangement {
             0 => StartingArrangement::Origin,
             1 => StartingArrangement::Random,
             2 => StartingArrangement::Ring,
-            _ => panic!("Invalid StartingArrangement"),
+            n => panic!("Invalid StartingArrangement: {n}"),
         }
     }
 }
@@ -81,7 +81,7 @@ impl Lerp<f32> for WallStrategy {
             2 => WallStrategy::Bounce,
             3 => WallStrategy::BounceRandom,
             4 => WallStrategy::SlowAndReverse,
-            _ => panic!("Invalid WallStrategy"),
+            n => panic!("Invalid WallStrategy: {n}"),
         }
     }
 }
@@ -95,7 +95,7 @@ impl Distribution<WallStrategy> for Standard {
             2 => WallStrategy::Bounce,
             3 => WallStrategy::BounceRandom,
             4 => WallStrategy::SlowAndReverse,
-            _ => panic!("Invalid WallStrategy"),
+            n => panic!("Invalid WallStrategy: {n}"),
         }
     }
 }
@@ -124,7 +124,7 @@ impl Lerp<f32> for ColorStrategy {
             4 => ColorStrategy::Hue,
             5 => ColorStrategy::Distance,
             6 => ColorStrategy::Time,
-            _ => panic!("Invalid WallStrategy"),
+            n => panic!("Invalid ColorStrategy: {n}"),
         }
     }
 }
@@ -139,7 +139,7 @@ impl Distribution<ColorStrategy> for Standard {
             4 => ColorStrategy::Hue,
             5 => ColorStrategy::Distance,
             6 => ColorStrategy::Time,
-            _ => panic!("Invalid WallStrategy"),
+            n => panic!("Invalid ColorStrategy: {n}"),
         }
     }
 }

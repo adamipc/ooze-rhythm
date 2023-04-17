@@ -36,7 +36,13 @@ where
                 );
                 &in_ports[0]
             }
-            _ => &in_ports[in_ports.len() - 1],
+            _ => {
+                println!(
+                    "Choosing last port: {}",
+                    midi_in.port_name(&in_ports[in_ports.len() - 1]).unwrap()
+                );
+                &in_ports[in_ports.len() - 1]
+            }
         };
 
         println!("\nOpening connection");
