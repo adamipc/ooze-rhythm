@@ -1,3 +1,6 @@
+///
+/// Heavily inspired by (and code "borrowed" from): https://observablehq.com/@johnowhitaker/dotswarm-exploring-slime-mould-inspired-shaders
+///
 use crate::preset::{Preset, PresetName};
 use chrono::Local;
 use glium::glutin::event::{ElementState, Event, StartCause, VirtualKeyCode, WindowEvent};
@@ -169,7 +172,7 @@ fn main() {
 
         // Regenerate points
         if p_pressed {
-            slime_mould.reset_points(&display);
+            slime_mould.reset_points();
         }
 
         if c_pressed {
@@ -185,7 +188,7 @@ fn main() {
                 u_time,
                 1.0,
             );
-            slime_mould.reset_points(&display);
+            slime_mould.reset_points();
             u_time_takeover = false;
         }
 

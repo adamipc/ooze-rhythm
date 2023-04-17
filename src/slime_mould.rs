@@ -28,7 +28,7 @@ impl SlimeMould {
         println!("{:?}", self.preset);
     }
 
-    pub fn draw(&self, frame: &mut impl glium::Surface, display: &glium::Display, u_time: f32) {
+    pub fn draw(&mut self, frame: &mut impl glium::Surface, display: &glium::Display, u_time: f32) {
         self.shader_pipeline.draw(
             frame,
             display,
@@ -65,14 +65,9 @@ impl SlimeMould {
         self.preset
     }
 
-    pub fn reset_points(&mut self, display: &glium::Display) {
-        self.shader_pipeline.reset_points(
-            display,
-            self.preset.number_of_points,
-            self.preset.starting_arrangement,
-            self.preset.average_starting_speed,
-            self.preset.starting_speed_spread,
-        );
+    pub fn reset_points(&mut self) {
+        self.shader_pipeline
+            .reset_points(self.preset.initial_parameters);
     }
 
     pub fn update(&mut self) {}

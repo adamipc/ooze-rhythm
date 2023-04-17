@@ -5,14 +5,7 @@ use rand::{
 };
 #[derive(Lerp, PartialEq, Debug, Copy, Clone)]
 pub struct Preset {
-    // Initial config
-    #[lerp(skip)]
-    pub number_of_points: u32,
-    #[lerp(f32)]
-    pub starting_arrangement: StartingArrangement,
-    pub average_starting_speed: f32,
-    pub starting_speed_spread: f32,
-
+    pub initial_parameters: InitialParameters,
     // Vertex Shader Uniforms
     pub speed_multiplier: f32,
     pub point_size: f32,
@@ -192,16 +185,28 @@ impl PresetName {
     }
 }
 
+#[derive(Lerp, PartialEq, Debug, Copy, Clone)]
+pub struct InitialParameters {
+    // Initial config
+    #[lerp(skip)]
+    pub number_of_points: u32,
+    #[lerp(f32)]
+    pub starting_arrangement: StartingArrangement,
+    pub average_starting_speed: f32,
+    pub starting_speed_spread: f32,
+}
+
 impl Preset {
     pub fn new(preset_name: PresetName) -> Preset {
         println!("Creating preset: {:?}", preset_name);
         match preset_name {
             PresetName::GreenSlime => Preset {
-                number_of_points: u32::pow(2, 20),
-                starting_arrangement: StartingArrangement::Origin,
-                average_starting_speed: 0.0,
-                starting_speed_spread: 0.3,
-
+                initial_parameters: InitialParameters {
+                    number_of_points: u32::pow(2, 20),
+                    starting_arrangement: StartingArrangement::Origin,
+                    average_starting_speed: 0.0,
+                    starting_speed_spread: 0.3,
+                },
                 speed_multiplier: 1.0,
                 point_size: 1.0,
                 random_steer_factor: 0.1,
@@ -215,10 +220,12 @@ impl Preset {
                 blurring: 1.0,
             },
             PresetName::CollapsingBubble => Preset {
-                number_of_points: u32::pow(2, 13),
-                starting_arrangement: StartingArrangement::Ring,
-                average_starting_speed: 0.5,
-                starting_speed_spread: 0.1,
+                initial_parameters: InitialParameters {
+                    number_of_points: u32::pow(2, 13),
+                    starting_arrangement: StartingArrangement::Ring,
+                    average_starting_speed: 0.5,
+                    starting_speed_spread: 0.1,
+                },
 
                 speed_multiplier: 1.0,
                 point_size: 1.5,
@@ -233,10 +240,12 @@ impl Preset {
                 blurring: 1.0,
             },
             PresetName::SlimeRing => Preset {
-                number_of_points: u32::pow(2, 20),
-                starting_arrangement: StartingArrangement::Ring,
-                average_starting_speed: 0.1,
-                starting_speed_spread: 0.1,
+                initial_parameters: InitialParameters {
+                    number_of_points: u32::pow(2, 20),
+                    starting_arrangement: StartingArrangement::Ring,
+                    average_starting_speed: 0.1,
+                    starting_speed_spread: 0.1,
+                },
 
                 speed_multiplier: 1.0,
                 point_size: 1.0,
@@ -251,10 +260,12 @@ impl Preset {
                 blurring: 1.0,
             },
             PresetName::ShiftingWeb => Preset {
-                number_of_points: u32::pow(2, 18),
-                starting_arrangement: StartingArrangement::Ring,
-                average_starting_speed: 1.0,
-                starting_speed_spread: 0.1,
+                initial_parameters: InitialParameters {
+                    number_of_points: u32::pow(2, 18),
+                    starting_arrangement: StartingArrangement::Ring,
+                    average_starting_speed: 1.0,
+                    starting_speed_spread: 0.1,
+                },
 
                 speed_multiplier: 1.0,
                 point_size: 1.0,
@@ -269,10 +280,12 @@ impl Preset {
                 blurring: 1.0,
             },
             PresetName::Waves => Preset {
-                number_of_points: u32::pow(2, 18),
-                starting_arrangement: StartingArrangement::Origin,
-                average_starting_speed: 1.0,
-                starting_speed_spread: 0.0,
+                initial_parameters: InitialParameters {
+                    number_of_points: u32::pow(2, 18),
+                    starting_arrangement: StartingArrangement::Origin,
+                    average_starting_speed: 1.0,
+                    starting_speed_spread: 0.0,
+                },
 
                 speed_multiplier: 1.0,
                 point_size: 1.0,
@@ -287,10 +300,12 @@ impl Preset {
                 blurring: 1.0,
             },
             PresetName::Flower => Preset {
-                number_of_points: u32::pow(2, 14),
-                starting_arrangement: StartingArrangement::Origin,
-                average_starting_speed: 0.0,
-                starting_speed_spread: 0.8,
+                initial_parameters: InitialParameters {
+                    number_of_points: u32::pow(2, 14),
+                    starting_arrangement: StartingArrangement::Origin,
+                    average_starting_speed: 0.0,
+                    starting_speed_spread: 0.8,
+                },
 
                 speed_multiplier: 1.0,
                 point_size: 1.0,
@@ -305,10 +320,12 @@ impl Preset {
                 blurring: 1.0,
             },
             PresetName::ChristmasChaos => Preset {
-                number_of_points: u32::pow(2, 12),
-                starting_arrangement: StartingArrangement::Random,
-                average_starting_speed: 0.9,
-                starting_speed_spread: 0.0,
+                initial_parameters: InitialParameters {
+                    number_of_points: u32::pow(2, 12),
+                    starting_arrangement: StartingArrangement::Random,
+                    average_starting_speed: 0.9,
+                    starting_speed_spread: 0.0,
+                },
 
                 speed_multiplier: 1.0,
                 point_size: 3.0,
@@ -323,10 +340,12 @@ impl Preset {
                 blurring: 1.0,
             },
             PresetName::Explode => Preset {
-                number_of_points: u32::pow(2, 18),
-                starting_arrangement: StartingArrangement::Origin,
-                average_starting_speed: 0.4,
-                starting_speed_spread: 0.3,
+                initial_parameters: InitialParameters {
+                    number_of_points: u32::pow(2, 18),
+                    starting_arrangement: StartingArrangement::Origin,
+                    average_starting_speed: 0.4,
+                    starting_speed_spread: 0.3,
+                },
 
                 speed_multiplier: 1.0,
                 point_size: 2.0,
@@ -341,10 +360,12 @@ impl Preset {
                 blurring: 0.0,
             },
             PresetName::Tartan => Preset {
-                number_of_points: u32::pow(2, 18),
-                starting_arrangement: StartingArrangement::Origin,
-                average_starting_speed: 0.8,
-                starting_speed_spread: 0.1,
+                initial_parameters: InitialParameters {
+                    number_of_points: u32::pow(2, 18),
+                    starting_arrangement: StartingArrangement::Origin,
+                    average_starting_speed: 0.8,
+                    starting_speed_spread: 0.1,
+                },
 
                 speed_multiplier: 1.0,
                 point_size: 1.0,
@@ -359,10 +380,12 @@ impl Preset {
                 blurring: 1.0,
             },
             PresetName::Globe => Preset {
-                number_of_points: u32::pow(2, 16),
-                starting_arrangement: StartingArrangement::Ring,
-                average_starting_speed: 0.0,
-                starting_speed_spread: 0.3,
+                initial_parameters: InitialParameters {
+                    number_of_points: u32::pow(2, 16),
+                    starting_arrangement: StartingArrangement::Ring,
+                    average_starting_speed: 0.0,
+                    starting_speed_spread: 0.3,
+                },
 
                 speed_multiplier: 1.0,
                 point_size: 1.0,
@@ -380,13 +403,21 @@ impl Preset {
     }
 }
 
-impl Distribution<Preset> for Standard {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Preset {
-        Preset {
+impl Distribution<InitialParameters> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> InitialParameters {
+        InitialParameters {
             number_of_points: u32::pow(2, rng.gen_range(14..=20)),
             starting_arrangement: rng.gen(),
             average_starting_speed: rng.gen_range(0.0..=2.0),
             starting_speed_spread: rng.gen_range(0.0..=1.0),
+        }
+    }
+}
+
+impl Distribution<Preset> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Preset {
+        Preset {
+            initial_parameters: rng.gen(),
             speed_multiplier: rng.gen_range(0.0..=2.0),
             point_size: rng.gen_range(0.0..=5.0),
             random_steer_factor: rng.gen_range(0.0..=0.1),

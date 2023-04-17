@@ -1,5 +1,4 @@
-use crate::preset::Preset;
-use crate::preset::StartingArrangement;
+use crate::preset::{InitialParameters, Preset, StartingArrangement};
 use glium::uniforms::{self, Sampler};
 use glium::{implement_vertex, uniform, Surface};
 use lerp::Lerp;
@@ -28,6 +27,8 @@ implement_vertex!(Vertex, a_vertex);
 implement_vertex!(Position, a_position);
 
 pub struct ShaderPipeline {
+    reset_points_before_draw: bool,
+    initial_parameters: InitialParameters,
     shader_1: glium::Program,
     shader_2: glium::Program,
     vertex_buffer: glium::VertexBuffer<Vertex>,
@@ -85,15 +86,11 @@ impl ShaderPipeline {
         )
         .unwrap();
 
-        let (buffer_a, buffer_b) = Self::get_initial_locations(
-            display,
-            preset.number_of_points,
-            preset.starting_arrangement,
-            preset.average_starting_speed,
-            preset.starting_speed_spread,
-        );
+        let (buffer_a, buffer_b) = Self::get_initial_locations(display, preset.initial_parameters);
 
         Self {
+            reset_points_before_draw: false,
+            initial_parameters: preset.initial_parameters,
             buffer_a: RefCell::new(buffer_a),
             buffer_b: RefCell::new(buffer_b),
             vertex_buffer,
@@ -124,7 +121,7 @@ impl ShaderPipeline {
         }
     }
     pub fn draw(
-        &self,
+        &mut self,
         frame: &mut impl glium::Surface,
         display: &glium::Display,
         preset: Preset,
@@ -133,6 +130,18 @@ impl ShaderPipeline {
         lerp_length: f32,
         u_time: f32,
     ) {
+        if self.reset_points_before_draw {
+            let (buffer_a, buffer_b) =
+                Self::get_initial_locations(display, self.initial_parameters);
+
+            let (buffer_a, buffer_b) = (RefCell::new(buffer_a), RefCell::new(buffer_b));
+
+            self.buffer_a.swap(&buffer_a);
+            self.buffer_b.swap(&buffer_b);
+
+            self.reset_points_before_draw = false;
+        }
+
         let lerp_now = (u_time - lerp_start).abs();
         //println!("u_time: {u_time} lerp_start: {lerp_start} lerp_now: {lerp_now}");
         let lerp_preset = lerp_now < lerp_length;
@@ -305,21 +314,22 @@ impl ShaderPipeline {
 
     fn get_initial_locations(
         display: &glium::Display,
-        n: u32,
-        starting_arrangement: StartingArrangement,
-        initial_speed: f32,
-        speed_randomness: f32,
+        initial_parameters: InitialParameters,
     ) -> (glium::VertexBuffer<Position>, glium::VertexBuffer<Position>) {
-        let mut initial_locations = vec![Position::default(); n as usize];
+        let mut initial_locations =
+            vec![Position::default(); initial_parameters.number_of_points as usize];
 
-        let pi_times_2_over_n = std::f32::consts::PI * 2.0 / n as f32;
+        let pi_times_2_over_n =
+            std::f32::consts::PI * 2.0 / initial_parameters.number_of_points as f32;
 
         let mut rng = rand::thread_rng();
-        for i in 0..n {
-            let speed = (rng.gen_range(0.0..1.00) * 0.01 * speed_randomness + 0.01 * initial_speed)
-                / 1000.0;
+        for i in 0..initial_parameters.number_of_points {
+            let speed =
+                (rng.gen_range(0.0..1.00) * 0.01 * initial_parameters.starting_speed_spread
+                    + 0.01 * initial_parameters.average_starting_speed)
+                    / 1000.0;
             initial_locations[i as usize] = Position {
-                a_position: match starting_arrangement {
+                a_position: match initial_parameters.starting_arrangement {
                     StartingArrangement::Random => [
                         rng.gen_range(-1.0..1.0), // x
                         rng.gen_range(-1.0..1.0), // y
@@ -673,25 +683,8 @@ impl ShaderPipeline {
         .unwrap()
     }
 
-    pub fn reset_points(
-        &mut self,
-        display: &glium::Display,
-        n: u32,
-        starting_arrangement: StartingArrangement,
-        initial_speed: f32,
-        speed_randomness: f32,
-    ) {
-        let (buffer_a, buffer_b) = Self::get_initial_locations(
-            display,
-            n,
-            starting_arrangement,
-            initial_speed,
-            speed_randomness,
-        );
-
-        let (buffer_a, buffer_b) = (RefCell::new(buffer_a), RefCell::new(buffer_b));
-
-        self.buffer_a.swap(&buffer_a);
-        self.buffer_b.swap(&buffer_b);
+    pub fn reset_points(&mut self, initial_parameters: InitialParameters) {
+        self.reset_points_before_draw = true;
+        self.initial_parameters = initial_parameters;
     }
 }
