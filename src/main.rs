@@ -8,146 +8,31 @@ use std::sync::mpsc::sync_channel;
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub mod beat;
+pub mod config;
 pub mod midi;
 pub mod preset;
 pub mod screenshot;
 pub mod shader_pipeline;
 pub mod slime_mould;
 
-pub mod beat {
-    use beat_detector::{BeatInfo, StrategyKind};
-    use cpal::traits::{DeviceTrait, HostTrait};
-    use cpal::Device;
-    use std::collections::BTreeMap;
-    use std::io::stdin;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-    use std::time::Instant;
-    use yata::methods::EMA;
-    use yata::prelude::*;
-
-    pub struct BeatDetector {}
-
-    impl BeatDetector {
-        pub fn new() -> Self {
-            BeatDetector {}
-        }
-
-        pub fn start_listening(
-            &self,
-            mut callback: impl FnMut((BeatInfo, f64)) + Sync + Send + 'static,
-        ) -> impl FnOnce() -> () + Send + 'static {
-            let recording = Arc::new(AtomicBool::new(true));
-            let recording_cpy = recording.clone();
-
-            let exit_callback = move || {
-                recording_cpy.store(false, Ordering::SeqCst);
-            };
-
-            println!("Supported hosts:\n {:?}", cpal::ALL_HOSTS);
-            let available_hosts = cpal::available_hosts();
-            println!("Available hosts:\n {:?}", available_hosts);
-
-            let host = cpal::default_host();
-            for host_id in available_hosts {
-                println!("Host: {:?}", host_id.name());
-                if host_id.name() == "ASIO" {
-                    //println!("Using Asio host");
-                    //host = cpal::host_from_id(host_id).unwrap();
-                }
-            }
-
-            let mut devs = BTreeMap::new();
-            for (i, dev) in host.input_devices().unwrap().enumerate() {
-                devs.insert(dev.name().unwrap_or(format!("Unknown device #{}", i)), dev);
-            }
-            if devs.is_empty() {
-                println!("No audio input devices found");
-                return exit_callback;
-            }
-
-            let dev = if devs.len() > 1 {
-                Self::select_input_device(devs)
-            } else {
-                devs.into_iter().next().unwrap().1
-            };
-
-            // Input configs
-            if let Ok(conf) = dev.default_input_config() {
-                println!("    Default input stream config:\n      {:?}", conf);
-            }
-            let input_configs = match dev.supported_input_configs() {
-                Ok(f) => f.collect(),
-                Err(e) => {
-                    println!("    Error getting supported input configs: {:?}", e);
-                    Vec::new()
-                }
-            };
-            if !input_configs.is_empty() {
-                println!("    All supported input stream configs:");
-                for (config_index, config) in input_configs.into_iter().enumerate() {
-                    println!("      {}. {:?}", config_index, config);
-                }
-            }
-
-            let strategy = StrategyKind::Spectrum;
-
-            let mut ema = EMA::new(32, &500.0).unwrap();
-
-            let mut last_beat = Instant::now();
-            let on_beat = move |info: BeatInfo| {
-                // beat detectors relative_ms is unreliable, since we
-                // are reading live audio data just use the current time
-                let current_beat = Instant::now();
-                let time_since_last_beat = (current_beat - last_beat).as_millis() as f64;
-                let ema_result = ema.next(&time_since_last_beat);
-
-                last_beat = current_beat;
-                //        println!("EMA: {ema_result} BPM: {}", 60_000.0 / ema_result);
-                //        println!("Beat detected: {:?}", info,);
-                callback((info, 60_000.0 / ema_result));
-            };
-            let _ = beat_detector::record::start_listening(on_beat, Some(dev), strategy, recording)
-                .unwrap();
-
-            exit_callback
-        }
-
-        fn select_input_device(devs: BTreeMap<String, Device>) -> Device {
-            println!("Available audio devices:");
-            for (i, (name, _)) in devs.iter().enumerate() {
-                println!(" [{}] {}", i, name);
-            }
-
-            println!("Select audio device: input device number and enter:");
-            let mut input = String::new();
-            while stdin().read_line(&mut input).unwrap() == 0 {}
-            let input = input
-                .trim()
-                .parse::<u8>()
-                .expect("Input must be a valid number!");
-
-            devs.into_iter()
-                .enumerate()
-                .filter(|(i, _)| *i == input as usize)
-                .map(|(_i, (_name, dev))| dev)
-                .take(1)
-                .next()
-                .unwrap()
-        }
-    }
-}
-
 fn main() {
-    let midi_channel = midi::MidiChannel::new();
+    let app_config = config::get_config();
+    let midi_channel = midi::MidiChannel::new(app_config.midi_device_id);
 
     let beat_detector = beat::BeatDetector::new();
 
     let (beat_sender, beat_receiver) = sync_channel(64);
 
-    let _ = beat_detector.start_listening(move |(_, bpm)| {
-        beat_sender.send(bpm).unwrap();
-    });
+    if app_config.audio_host_name.is_some() && app_config.audio_device_id.is_some() {
+        beat_detector.start_listening(
+            app_config.audio_host_name.unwrap(),
+            app_config.audio_device_id.unwrap(),
+            move |(_, bpm)| {
+                beat_sender.send(bpm).unwrap();
+            },
+        );
+    }
 
     // 1. The **winit::EventsLoop** for handling events.
     let event_loop = glutin::event_loop::EventLoop::new();
@@ -192,9 +77,9 @@ fn main() {
         screenshot_taker.next_frame();
 
         let mut got_beat = false;
-        for bpm in beat_receiver.try_iter() {
+        for _bpm in beat_receiver.try_iter() {
             got_beat = true;
-            println!("Got beat: {bpm}");
+            //println!("Got beat! BPM: {bpm:.2}");
         }
 
         let mut target = display.draw();

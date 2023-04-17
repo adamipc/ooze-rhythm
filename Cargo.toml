@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 beat-detector = { path = "../beat-detector/" }
 chrono = "0.4.24"
+config = "0.13.3"
 cpal = { git = "https://github.com/RustAudio/cpal.git", features = ["asio"] }
 glium = "0.32.1"
 image = "0.24.6"
@@ -15,5 +16,7 @@ lerp = { version = "0.4.0", features = ["derive"] }
 midir = { version = "0.9.1", features = ["winrt"] }
 rand = "0.8.5"
 ringbuffer = "0.13.0"
+serde = { version = "1.0.160", features = ["serde_derive", "derive"] }
+serde_derive = "1.0.160"
 yata = "0.6.1"
 

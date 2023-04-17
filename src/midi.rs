@@ -5,12 +5,22 @@ pub struct MidiChannel<T> {
     receiver: std::sync::mpsc::Receiver<T>,
 }
 
+pub fn list_midi_devices() {
+    let midi_in = midir::MidiInput::new("midi reading input").unwrap();
+
+    let in_ports = midi_in.ports();
+    println!("Available MIDI input ports:");
+    for (i, in_port) in in_ports.iter().enumerate() {
+        println!(" {}: {}", i, midi_in.port_name(in_port).unwrap());
+    }
+}
+
 impl<T> MidiChannel<T>
 where
     T: std::convert::From<(u64, [u8; 3])> + std::marker::Send + 'static,
 {
-    pub fn new() -> Self {
-        let receiver = Self::setup_midi_input();
+    pub fn new(channel: Option<usize>) -> Self {
+        let receiver = Self::setup_midi_input(channel);
         Self { receiver }
     }
 
@@ -18,49 +28,35 @@ where
         self.receiver.try_iter()
     }
 
-    fn setup_midi_input() -> std::sync::mpsc::Receiver<T> {
+    fn setup_midi_input(channel: Option<usize>) -> std::sync::mpsc::Receiver<T> {
         let (sender, receiver) = sync_channel(64);
         let mut midi_in = MidiInput::new("midir reading input").unwrap();
         midi_in.ignore(Ignore::None);
 
         let in_ports = midi_in.ports();
-        let in_port = match in_ports.len() {
-            0 => {
-                println!("no midi input port found");
-                return receiver;
-            }
-            1 => {
-                println!(
-                    "Choosing the only available input port: {}",
-                    midi_in.port_name(&in_ports[0]).unwrap()
+        if let Some(channel) = channel {
+            if channel < in_ports.len() {
+                let in_port = &in_ports[channel];
+
+                let in_port_name = midi_in.port_name(in_port).unwrap();
+
+                let _conn_in = midi_in.connect(
+                    in_port,
+                    "midir-read-input",
+                    move |time, message, _| {
+                        let len = std::cmp::min(message.len(), MAX_MIDI);
+                        let mut data = [0; MAX_MIDI];
+                        data[..len].copy_from_slice(&message[..len]);
+                        sender.send((time, data).into()).unwrap();
+                    },
+                    (),
                 );
-                &in_ports[0]
+
+                println!("Connection open, reading input from '{}'.", in_port_name);
+            } else {
+                eprintln!("Input channel not available: {channel}");
             }
-            _ => {
-                println!(
-                    "Choosing last port: {}",
-                    midi_in.port_name(&in_ports[in_ports.len() - 1]).unwrap()
-                );
-                &in_ports[in_ports.len() - 1]
-            }
-        };
-
-        println!("\nOpening connection");
-        let in_port_name = midi_in.port_name(in_port).unwrap();
-
-        let _conn_in = midi_in.connect(
-            in_port,
-            "midir-read-input",
-            move |time, message, _| {
-                let len = std::cmp::min(message.len(), MAX_MIDI);
-                let mut data = [0; MAX_MIDI];
-                data[..len].copy_from_slice(&message[..len]);
-                sender.send((time, data).into()).unwrap();
-            },
-            (),
-        );
-
-        println!("Connection open, reading input from '{}'.", in_port_name);
+        }
         receiver
     }
 }
