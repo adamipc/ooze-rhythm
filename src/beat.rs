@@ -40,25 +40,34 @@ pub fn list_audio_devices() {
         }
     }
 }
-pub struct BeatDetector {}
+
+pub struct BeatDetector {
+    // This should be called on drop since we can't
+    // call it from the event_loop
+    // TODO: https://docs.rs/drop-move/latest/drop_move/
+    exit_callback: Box<dyn FnOnce() + 'static>,
+}
 
 impl BeatDetector {
     pub fn new() -> Self {
-        BeatDetector {}
+        BeatDetector {
+            exit_callback: Box::new(|| ()),
+        }
     }
 
     pub fn start_listening(
-        &self,
+        &mut self,
         host_name: String,
         device_id: usize,
         mut callback: impl FnMut((BeatInfo, f64)) + Sync + Send + 'static,
-    ) -> impl FnOnce() -> () + Send + 'static {
+    ) {
         let recording = Arc::new(AtomicBool::new(true));
         let recording_cpy = recording.clone();
 
         let exit_callback = move || {
             recording_cpy.store(false, Ordering::SeqCst);
         };
+        self.exit_callback = Box::new(exit_callback);
 
         let mut audio_device = None;
         for host_id in cpal::available_hosts() {
@@ -94,6 +103,5 @@ impl BeatDetector {
                 beat_detector::record::start_listening(on_beat, Some(device), strategy, recording)
                     .unwrap();
         }
-        exit_callback
     }
 }

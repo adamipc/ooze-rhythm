@@ -28,6 +28,7 @@ implement_vertex!(Position, a_position);
 
 pub struct ShaderPipeline {
     reset_points_before_draw: bool,
+    clear_textures_before_draw: bool,
     initial_parameters: InitialParameters,
     shader_1: glium::Program,
     shader_2: glium::Program,
@@ -38,6 +39,8 @@ pub struct ShaderPipeline {
     u_texture1: RefCell<glium::texture::Texture2d>,
     target_texture0: RefCell<glium::texture::Texture2d>,
     target_texture1: RefCell<glium::texture::Texture2d>,
+    width: u32,
+    height: u32,
 }
 
 impl ShaderPipeline {
@@ -89,7 +92,10 @@ impl ShaderPipeline {
         let (buffer_a, buffer_b) = Self::get_initial_locations(display, preset.initial_parameters);
 
         Self {
+            width,
+            height,
             reset_points_before_draw: false,
+            clear_textures_before_draw: false,
             initial_parameters: preset.initial_parameters,
             buffer_a: RefCell::new(buffer_a),
             buffer_b: RefCell::new(buffer_b),
@@ -130,6 +136,11 @@ impl ShaderPipeline {
         lerp_length: f32,
         u_time: f32,
     ) {
+        if self.clear_textures_before_draw {
+            self.clear_textures(display, self.width, self.height);
+            self.clear_textures_before_draw = false;
+        }
+
         if self.reset_points_before_draw {
             let (buffer_a, buffer_b) =
                 Self::get_initial_locations(display, self.initial_parameters);
@@ -308,8 +319,8 @@ impl ShaderPipeline {
         u_texture1.swap(&self.u_texture1);
     }
 
-    pub fn clear(&mut self, display: &glium::Display, width: u32, height: u32) {
-        self.clear_textures(display, width, height);
+    pub fn clear(&mut self) {
+        self.clear_textures_before_draw = true;
     }
 
     fn get_initial_locations(

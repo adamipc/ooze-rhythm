@@ -7,8 +7,6 @@ pub struct SlimeMould {
     preset: Preset,
     lerp_time: f32,
     lerp_length: f32,
-    width: u32,
-    height: u32,
 }
 
 impl SlimeMould {
@@ -19,8 +17,6 @@ impl SlimeMould {
             preset,
             lerp_time: 0.0f32,
             lerp_length: 0.0f32,
-            width,
-            height,
         }
     }
 
@@ -40,8 +36,8 @@ impl SlimeMould {
         );
     }
 
-    pub fn clear(&mut self, display: &glium::Display) {
-        self.shader_pipeline.clear(display, self.width, self.height);
+    pub fn clear(&mut self) {
+        self.shader_pipeline.clear();
     }
     pub fn transition_preset(
         &mut self,

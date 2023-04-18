@@ -22,6 +22,25 @@ impl glium::texture::Texture2dDataSink<(u8, u8, u8, u8)> for RGBAImageData {
     }
 }
 
+pub fn save_screenshot(image_data: RGBAImageData, image_path: String) {
+    let pixels = {
+        let mut v = Vec::with_capacity(image_data.data.len() * 4);
+        for (a, b, c, d) in image_data.data {
+            v.push(a);
+            v.push(b);
+            v.push(c);
+            v.push(d);
+        }
+        v
+    };
+
+    let image_buffer =
+        image::ImageBuffer::from_raw(image_data.width, image_data.height, pixels).unwrap();
+
+    let image = image::DynamicImage::ImageRgba8(image_buffer).flipv();
+    image.save(image_path).unwrap();
+}
+
 struct AsyncScreenshotTask {
     pub target_frame: u64,
     pub pixel_buffer: glium::texture::pixel_buffer::PixelBuffer<(u8, u8, u8, u8)>,

@@ -23,7 +23,7 @@ fn main() {
     let app_config = config::get_config();
     let midi_channel = midi::MidiChannel::new(app_config.midi_device_id);
 
-    let beat_detector = beat::BeatDetector::new();
+    let mut beat_detector = beat::BeatDetector::new();
 
     let (beat_sender, beat_receiver) = sync_channel(64);
 
@@ -35,7 +35,7 @@ fn main() {
                 beat_sender.send(bpm).unwrap();
             },
         );
-    }
+    };
 
     // 1. The **winit::EventsLoop** for handling events.
     let event_loop = glutin::event_loop::EventLoop::new();
@@ -76,6 +76,7 @@ fn main() {
     let mut u_time: f32 = 0.0;
     let mut u_time_takeover = false;
     let mut beat_start_time = u_time;
+    let primary_window_id = display.gl_window().window().id();
     start_loop(event_loop, move |events| {
         screenshot_taker.next_frame();
 
@@ -97,36 +98,38 @@ fn main() {
 
         let mut action = Action::Continue;
 
-        let mut enter_pressed = false;
-        let mut escape_pressed = false;
-        let mut r_pressed = false;
-        let mut p_pressed = false;
+        let mut randomize_beat_preset = false;
+        let mut toggle_fullscreen = false;
+        let mut stop_event_loop = false;
+        let mut randomize_preset = false;
+        let mut regenerate_points = false;
         let mut backspace_pressed = false;
-        let mut c_pressed = false;
-        let mut s_pressed = false;
+        let mut clear_textures = false;
+        let mut save_preset = false;
 
-        let mut number_pressed = -1;
+        let mut load_preset_number = -1;
+        let mut load_beat_preset_number = -1;
 
         for event in events {
             if let Event::WindowEvent { event, window_id } = event {
-                if *window_id == display.gl_window().window().id() {
+                if *window_id == primary_window_id {
                     match event {
                         WindowEvent::CloseRequested => action = Action::Stop,
                         WindowEvent::KeyboardInput { input, .. } => {
                             if let ElementState::Pressed = input.state {
                                 match input.virtual_keycode {
-                                    Some(VirtualKeyCode::Escape) => escape_pressed = true,
-                                    Some(VirtualKeyCode::Return) => enter_pressed = true,
-                                    Some(VirtualKeyCode::R) => r_pressed = true,
-                                    Some(VirtualKeyCode::P) => p_pressed = true,
-                                    Some(VirtualKeyCode::C) => c_pressed = true,
-                                    Some(VirtualKeyCode::S) => s_pressed = true,
+                                    Some(VirtualKeyCode::Escape) => stop_event_loop = true,
+                                    Some(VirtualKeyCode::Return) => toggle_fullscreen = true,
+                                    Some(VirtualKeyCode::R) => randomize_preset = true,
+                                    Some(VirtualKeyCode::P) => regenerate_points = true,
+                                    Some(VirtualKeyCode::C) => clear_textures = true,
+                                    Some(VirtualKeyCode::S) => save_preset = true,
                                     Some(VirtualKeyCode::Back) => backspace_pressed = true,
                                     _ => (),
                                 }
                                 // If we received a number
                                 if input.scancode >= 2 && input.scancode <= 11 {
-                                    number_pressed = ((input.scancode - 1) % 10) as i32;
+                                    load_preset_number = ((input.scancode - 1) % 10) as i32;
                                 }
                             }
                         }
@@ -142,13 +145,15 @@ fn main() {
             match m {
                 midi::Mpd218Message::PadPressed(pad, _velocity, _) => {
                     if pad <= 9 {
-                        number_pressed = pad as i32;
+                        load_preset_number = pad as i32;
+                    } else if pad >= 16 && pad <= 25 {
+                        load_beat_preset_number = (pad - 16) as i32;
                     } else {
                         match pad {
-                            10 => c_pressed = true,
-                            11 => p_pressed = true,
-                            12 => r_pressed = true,
-                            13 => beat_preset = rand::random(),
+                            10 => clear_textures = true,
+                            11 => regenerate_points = true,
+                            12 => randomize_preset = true,
+                            13 => randomize_beat_preset = true,
                             _ => (),
                         }
                     }
@@ -164,27 +169,36 @@ fn main() {
             }
         }
 
+        // Update presets
+        if randomize_beat_preset {
+            beat_preset = rand::random();
+        }
+
         // Random preset
-        if r_pressed {
+        if randomize_preset {
             slime_mould.transition_preset(slime_mould.get_preset(), rand::random(), u_time, 1.0);
             u_time_takeover = false;
         }
 
         // Regenerate points
-        if p_pressed {
+        if regenerate_points {
             slime_mould.reset_points();
         }
 
-        if c_pressed {
+        if clear_textures {
             // Clear the textures and buffers
-            slime_mould.clear(&display);
+            slime_mould.clear();
         }
 
-        if number_pressed >= 0 {
+        if load_beat_preset_number >= 0 {
+            beat_preset = Preset::new(PresetName::from_u32(load_beat_preset_number as u32));
+        }
+
+        if load_preset_number >= 0 {
             // Load presets
             slime_mould.transition_preset(
                 slime_mould.get_preset(),
-                Preset::new(PresetName::from_u32(number_pressed as u32)),
+                Preset::new(PresetName::from_u32(load_preset_number as u32)),
                 u_time,
                 1.0,
             );
@@ -192,7 +206,7 @@ fn main() {
             u_time_takeover = false;
         }
 
-        if s_pressed {
+        if save_preset {
             slime_mould.save_preset();
         }
 
@@ -215,32 +229,16 @@ fn main() {
         }
 
         for image_data in screenshot_taker.pickup_screenshots() {
+            let image_name = format!(
+                "slime_mould-{}.png",
+                Local::now().format("%Y-%m-%d_%H%M%S%.f")
+            );
             thread::spawn(move || {
-                let pixels = {
-                    let mut v = Vec::with_capacity(image_data.data.len() * 4);
-                    for (a, b, c, d) in image_data.data {
-                        v.push(a);
-                        v.push(b);
-                        v.push(c);
-                        v.push(d);
-                    }
-                    v
-                };
-
-                let image_buffer =
-                    image::ImageBuffer::from_raw(image_data.width, image_data.height, pixels)
-                        .unwrap();
-
-                let image = image::DynamicImage::ImageRgba8(image_buffer).flipv();
-                let image_name = format!(
-                    "slime_mould-{}.png",
-                    Local::now().format("%Y-%m-%d_%H%M%S%.f")
-                );
-                image.save(image_name).unwrap();
+                screenshot::save_screenshot(image_data, image_name);
             });
         }
 
-        if enter_pressed {
+        if toggle_fullscreen {
             if fullscreen {
                 display.gl_window().window().set_fullscreen(None);
                 fullscreen = false;
@@ -258,7 +256,7 @@ fn main() {
             }
         }
 
-        if escape_pressed {
+        if stop_event_loop {
             action = Action::Stop;
         }
 
@@ -271,7 +269,7 @@ pub enum Action {
     Continue,
 }
 
-pub fn start_loop<F>(event_loop: EventLoop<()>, mut callback: F) -> !
+pub fn start_loop<F>(event_loop: EventLoop<()>, mut callback: F)
 where
     F: 'static + FnMut(&Vec<Event<'_, ()>>) -> Action,
 {
@@ -308,7 +306,9 @@ where
             Action::Continue => {
                 *control_flow = ControlFlow::WaitUntil(next_frame_time);
             }
-            Action::Stop => *control_flow = ControlFlow::Exit,
+            Action::Stop => {
+                *control_flow = ControlFlow::Exit;
+            }
         }
-    })
+    });
 }
