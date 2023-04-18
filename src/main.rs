@@ -7,7 +7,7 @@ use glium::glutin::event::{ElementState, Event, StartCause, VirtualKeyCode, Wind
 use glium::glutin::event_loop::{ControlFlow, EventLoop};
 use glium::glutin::window::Fullscreen;
 use glium::{glutin, Surface};
-use std::sync::mpsc::sync_channel;
+use std::sync::mpsc::{sync_channel, TryIter};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -18,6 +18,25 @@ pub mod preset;
 pub mod screenshot;
 pub mod shader_pipeline;
 pub mod slime_mould;
+
+enum PresetSlot {
+    Primary,
+    Secondary,
+    Beat,
+}
+
+enum InputEvent {
+    ToggleFullscreen,
+    RandomizePreset(PresetSlot),
+    LoadPreset(PresetSlot, PresetName),
+    UpdateBlendValue(f32),
+    UpdateBeatTransitionTime(f32),
+    StopEventLoop,
+    DumpState,
+    ClearTextures,
+    ResetPoints,
+    TakeScreenshot,
+}
 
 fn main() {
     let app_config = config::get_config();
@@ -60,23 +79,21 @@ fn main() {
     //    and register the window with the event_loop.
     let display = glium::Display::new(wb, cb, &event_loop).unwrap();
 
-    // Start out with a randomized preset
-    let preset = rand::random();
+    let mut fullscreen = false;
+    let mut screenshot_taker = screenshot::AsyncScreenshotTaker::new(5);
+    let primary_window_id = display.gl_window().window().id();
 
     // Create our slime mould simulation
-    let mut slime_mould = slime_mould::SlimeMould::new(&display, width, height, preset);
+    let mut slime_mould = slime_mould::SlimeMould::new(&display, width, height, rand::random());
 
-    let mut fullscreen = false;
-
-    let mut screenshot_taker = screenshot::AsyncScreenshotTaker::new(5);
-
-    let mut beat_preset: preset::Preset = rand::random();
-    let mut non_beat_preset = preset;
+    let mut beat_preset = rand::random();
+    let mut non_beat_preset = slime_mould.get_preset();
 
     let mut u_time: f32 = 0.0;
-    let mut u_time_takeover = false;
     let mut beat_start_time = u_time;
-    let primary_window_id = display.gl_window().window().id();
+    let mut blend_value = 0.0;
+    let mut beat_transition_time = 0.2;
+
     start_loop(event_loop, move |events| {
         screenshot_taker.next_frame();
 
@@ -88,144 +105,85 @@ fn main() {
 
         let mut target = display.draw();
         target.clear_color(0.0, 0.0, 0.0, 1.0);
-        slime_mould.draw(&mut target, &display, u_time);
+        slime_mould.draw(&mut target, &display, u_time, blend_value);
         target.finish().unwrap();
 
-        if !u_time_takeover {
-            u_time += 0.02;
-        }
+        u_time += 0.02;
         slime_mould.update();
 
         let mut action = Action::Continue;
 
-        let mut randomize_beat_preset = false;
-        let mut toggle_fullscreen = false;
-        let mut stop_event_loop = false;
-        let mut randomize_preset = false;
-        let mut regenerate_points = false;
-        let mut backspace_pressed = false;
-        let mut clear_textures = false;
-        let mut save_preset = false;
-
-        let mut load_preset_number = -1;
-        let mut load_beat_preset_number = -1;
-
-        for event in events {
-            if let Event::WindowEvent { event, window_id } = event {
-                if *window_id == primary_window_id {
-                    match event {
-                        WindowEvent::CloseRequested => action = Action::Stop,
-                        WindowEvent::KeyboardInput { input, .. } => {
-                            if let ElementState::Pressed = input.state {
-                                match input.virtual_keycode {
-                                    Some(VirtualKeyCode::Escape) => stop_event_loop = true,
-                                    Some(VirtualKeyCode::Return) => toggle_fullscreen = true,
-                                    Some(VirtualKeyCode::R) => randomize_preset = true,
-                                    Some(VirtualKeyCode::P) => regenerate_points = true,
-                                    Some(VirtualKeyCode::C) => clear_textures = true,
-                                    Some(VirtualKeyCode::S) => save_preset = true,
-                                    Some(VirtualKeyCode::Back) => backspace_pressed = true,
-                                    _ => (),
-                                }
-                                // If we received a number
-                                if input.scancode >= 2 && input.scancode <= 11 {
-                                    load_preset_number = ((input.scancode - 1) % 10) as i32;
-                                }
-                            }
+        for event in input_callback(events, midi_channel.try_iter(), primary_window_id) {
+            match event {
+                InputEvent::UpdateBlendValue(new_value) => blend_value = new_value,
+                InputEvent::UpdateBeatTransitionTime(new_value) => beat_transition_time = new_value,
+                InputEvent::RandomizePreset(slot) => {
+                    let new_preset = rand::random();
+                    match slot {
+                        PresetSlot::Primary => {
+                            slime_mould.transition_preset(new_preset, u_time, 1.0)
                         }
-                        _ => (),
+                        PresetSlot::Secondary => slime_mould.set_secondary_preset(new_preset),
+                        PresetSlot::Beat => {
+                            beat_preset = new_preset;
+                        }
                     }
                 }
-            }
-        }
-
-        // Midi receiver
-        for m in midi_channel.try_iter() {
-            println!("{m:?}");
-            match m {
-                midi::Mpd218Message::PadPressed(pad, _velocity, _) => {
-                    if pad <= 9 {
-                        load_preset_number = pad as i32;
-                    } else if pad >= 16 && pad <= 25 {
-                        load_beat_preset_number = (pad - 16) as i32;
+                InputEvent::LoadPreset(slot, preset_name) => {
+                    let new_preset = Preset::new(preset_name);
+                    match slot {
+                        PresetSlot::Primary => {
+                            slime_mould.transition_preset(new_preset, u_time, 1.0);
+                            slime_mould.reset_points();
+                        }
+                        PresetSlot::Secondary => slime_mould.set_secondary_preset(new_preset),
+                        PresetSlot::Beat => {
+                            beat_preset = new_preset;
+                        }
+                    }
+                }
+                InputEvent::ResetPoints => slime_mould.reset_points(),
+                InputEvent::ClearTextures => slime_mould.clear(),
+                // TODO: Make sure we dump all state that can effect the current visual
+                // hopefully in such a way that it can easily be reloaded
+                InputEvent::DumpState => slime_mould.save_preset(),
+                InputEvent::TakeScreenshot => screenshot_taker.take_screenshot(&display),
+                InputEvent::ToggleFullscreen => {
+                    if fullscreen {
+                        display.gl_window().window().set_fullscreen(None);
+                        fullscreen = false;
                     } else {
-                        match pad {
-                            10 => clear_textures = true,
-                            11 => regenerate_points = true,
-                            12 => randomize_preset = true,
-                            13 => randomize_beat_preset = true,
-                            _ => (),
-                        }
+                        let monitor = display
+                            .gl_window()
+                            .window()
+                            .available_monitors()
+                            .next()
+                            .unwrap();
+                        let fs = Fullscreen::Borderless(Some(monitor));
+                        display.gl_window().window().set_fullscreen(Some(fs));
+
+                        fullscreen = true;
                     }
                 }
-                midi::Mpd218Message::KnobChanged(knob, value, _) => {
-                    if knob == 0 {
-                        u_time = value as f32 / 127.0;
-                        //println!("value: {value} u_time: {u_time}");
-                        u_time_takeover = true;
-                    }
-                }
-                _ => (),
+                InputEvent::StopEventLoop => action = Action::Stop,
             }
         }
 
-        // Update presets
-        if randomize_beat_preset {
-            beat_preset = rand::random();
-        }
-
-        // Random preset
-        if randomize_preset {
-            slime_mould.transition_preset(slime_mould.get_preset(), rand::random(), u_time, 1.0);
-            u_time_takeover = false;
-        }
-
-        // Regenerate points
-        if regenerate_points {
-            slime_mould.reset_points();
-        }
-
-        if clear_textures {
-            // Clear the textures and buffers
-            slime_mould.clear();
-        }
-
-        if load_beat_preset_number >= 0 {
-            beat_preset = Preset::new(PresetName::from_u32(load_beat_preset_number as u32));
-        }
-
-        if load_preset_number >= 0 {
-            // Load presets
-            slime_mould.transition_preset(
-                slime_mould.get_preset(),
-                Preset::new(PresetName::from_u32(load_preset_number as u32)),
-                u_time,
-                1.0,
-            );
-            slime_mould.reset_points();
-            u_time_takeover = false;
-        }
-
-        if save_preset {
-            slime_mould.save_preset();
-        }
-
-        // /*
         if got_beat {
             beat_start_time = u_time;
             non_beat_preset = slime_mould.get_preset();
-            slime_mould.transition_preset(non_beat_preset, beat_preset, u_time, 0.2);
+            slime_mould.transition_preset(beat_preset, u_time, beat_transition_time);
         } else {
             if beat_start_time > 0.0 {
-                if (u_time - beat_start_time) > 0.2 {
-                    slime_mould.transition_preset(beat_preset, non_beat_preset, u_time, 0.1);
+                if (u_time - beat_start_time) > beat_transition_time {
+                    slime_mould.transition_preset(
+                        non_beat_preset,
+                        u_time,
+                        beat_transition_time / 2.0,
+                    );
                     beat_start_time = -1.0;
                 }
             }
-        } // */
-        if backspace_pressed {
-            println!("Taking screenshot...");
-            screenshot_taker.take_screenshot(&display);
         }
 
         for image_data in screenshot_taker.pickup_screenshots() {
@@ -238,30 +196,106 @@ fn main() {
             });
         }
 
-        if toggle_fullscreen {
-            if fullscreen {
-                display.gl_window().window().set_fullscreen(None);
-                fullscreen = false;
-            } else {
-                let monitor = display
-                    .gl_window()
-                    .window()
-                    .available_monitors()
-                    .next()
-                    .unwrap();
-                let fs = Fullscreen::Borderless(Some(monitor));
-                display.gl_window().window().set_fullscreen(Some(fs));
-
-                fullscreen = true;
-            }
-        }
-
-        if stop_event_loop {
-            action = Action::Stop;
-        }
-
         action
     });
+}
+
+fn input_callback(
+    events: &Vec<Event<'_, ()>>,
+    midi_events: TryIter<'_, midi::Mpd218Message>,
+    primary_window_id: glium::glutin::window::WindowId,
+) -> Vec<InputEvent> {
+    let mut input_events = Vec::new();
+
+    for event in events {
+        if let Event::WindowEvent { event, window_id } = event {
+            if *window_id == primary_window_id {
+                match event {
+                    WindowEvent::CloseRequested => input_events.push(InputEvent::StopEventLoop),
+                    WindowEvent::KeyboardInput { input, .. } => {
+                        if let ElementState::Pressed = input.state {
+                            match input.virtual_keycode {
+                                Some(VirtualKeyCode::Escape) => {
+                                    input_events.push(InputEvent::StopEventLoop)
+                                }
+                                Some(VirtualKeyCode::Return) => {
+                                    input_events.push(InputEvent::ToggleFullscreen)
+                                }
+                                Some(VirtualKeyCode::R) => input_events
+                                    .push(InputEvent::RandomizePreset(PresetSlot::Primary)),
+                                Some(VirtualKeyCode::P) => {
+                                    input_events.push(InputEvent::ResetPoints)
+                                }
+                                Some(VirtualKeyCode::C) => {
+                                    input_events.push(InputEvent::ClearTextures)
+                                }
+                                Some(VirtualKeyCode::S) => input_events.push(InputEvent::DumpState),
+                                Some(VirtualKeyCode::Back) => {
+                                    input_events.push(InputEvent::TakeScreenshot)
+                                }
+                                _ => (),
+                            }
+                            // If we received a number
+                            if input.scancode >= 2 && input.scancode <= 11 {
+                                input_events.push(InputEvent::LoadPreset(
+                                    PresetSlot::Primary,
+                                    PresetName::from_u32(((input.scancode - 1) % 10) as u32),
+                                ));
+                            }
+                        }
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
+
+    // Midi receiver
+    for m in midi_events {
+        println!("{m:?}");
+        match m {
+            midi::Mpd218Message::PadPressed(pad, _velocity, _) => {
+                if pad <= 9 {
+                    input_events.push(InputEvent::LoadPreset(
+                        PresetSlot::Primary,
+                        PresetName::from_u32(pad as u32),
+                    ));
+                } else if pad >= 16 && pad <= 25 {
+                    input_events.push(InputEvent::LoadPreset(
+                        PresetSlot::Secondary,
+                        PresetName::from_u32((pad - 16) as u32),
+                    ));
+                } else if pad >= 32 && pad <= 41 {
+                    input_events.push(InputEvent::LoadPreset(
+                        PresetSlot::Beat,
+                        PresetName::from_u32((pad - 32) as u32),
+                    ));
+                } else {
+                    match pad {
+                        10 => input_events.push(InputEvent::ClearTextures),
+                        11 => input_events.push(InputEvent::ResetPoints),
+                        12 => input_events.push(InputEvent::RandomizePreset(PresetSlot::Primary)),
+                        13 => input_events.push(InputEvent::RandomizePreset(PresetSlot::Secondary)),
+                        14 => input_events.push(InputEvent::RandomizePreset(PresetSlot::Beat)),
+                        _ => (),
+                    }
+                }
+            }
+            midi::Mpd218Message::KnobChanged(knob, value, _) => {
+                if knob == 0 {
+                    input_events.push(InputEvent::UpdateBlendValue(value as f32 / 127.0));
+                }
+                if knob == 1 {
+                    input_events.push(InputEvent::UpdateBeatTransitionTime(
+                        value as f32 / 127.0 * 0.5,
+                    ));
+                }
+            }
+            _ => (),
+        }
+    }
+
+    input_events
 }
 
 pub enum Action {

@@ -1,7 +1,6 @@
 use crate::preset::{InitialParameters, Preset, StartingArrangement};
 use glium::uniforms::{self, Sampler};
 use glium::{implement_vertex, uniform, Surface};
-use lerp::Lerp;
 use rand::Rng;
 use std::cell::RefCell;
 
@@ -131,9 +130,6 @@ impl ShaderPipeline {
         frame: &mut impl glium::Surface,
         display: &glium::Display,
         preset: Preset,
-        old_preset: Preset,
-        lerp_start: f32,
-        lerp_length: f32,
         u_time: f32,
     ) {
         if self.clear_textures_before_draw {
@@ -152,15 +148,6 @@ impl ShaderPipeline {
 
             self.reset_points_before_draw = false;
         }
-
-        let lerp_now = (u_time - lerp_start).abs();
-        //println!("u_time: {u_time} lerp_start: {lerp_start} lerp_now: {lerp_now}");
-        let lerp_preset = lerp_now < lerp_length;
-        let preset = if lerp_preset {
-            old_preset.lerp(preset, lerp_now / lerp_length)
-        } else {
-            preset
-        };
 
         {
             let target_texture = self.target_texture0.borrow();
