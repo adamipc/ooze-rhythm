@@ -11,6 +11,7 @@ pub enum PresetSlot {
 
 pub enum InputEvent {
     ToggleFullscreen,
+    ToggleAutomation,
     RandomizePreset(PresetSlot),
     LoadPreset(PresetSlot, PresetName),
     UpdateBlendValue(f32),
@@ -52,6 +53,9 @@ pub fn input_callback(
                                     input_events.push(InputEvent::ClearTextures)
                                 }
                                 Some(VirtualKeyCode::S) => input_events.push(InputEvent::DumpState),
+                                Some(VirtualKeyCode::A) => {
+                                    input_events.push(InputEvent::ToggleAutomation)
+                                }
                                 Some(VirtualKeyCode::Back) => {
                                     input_events.push(InputEvent::TakeScreenshot)
                                 }
@@ -99,6 +103,7 @@ pub fn input_callback(
                         12 => input_events.push(InputEvent::RandomizePreset(PresetSlot::Primary)),
                         13 => input_events.push(InputEvent::RandomizePreset(PresetSlot::Secondary)),
                         14 => input_events.push(InputEvent::RandomizePreset(PresetSlot::Beat)),
+                        15 => input_events.push(InputEvent::ToggleAutomation),
                         _ => (),
                     }
                 }

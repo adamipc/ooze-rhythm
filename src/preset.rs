@@ -3,6 +3,7 @@ use rand::{
     distributions::{Distribution, Standard},
     Rng,
 };
+
 #[derive(Lerp, PartialEq, Debug, Copy, Clone)]
 pub struct Preset {
     pub initial_parameters: InitialParameters,
@@ -21,6 +22,9 @@ pub struct Preset {
     // Fragment Shader Uniforms
     pub fade_speed: f32,
     pub blurring: f32,
+
+    #[lerp(skip)]
+    pub u_time: f32,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -218,6 +222,8 @@ impl Preset {
 
                 fade_speed: 0.01,
                 blurring: 1.0,
+
+                u_time: 0.0,
             },
             PresetName::CollapsingBubble => Preset {
                 initial_parameters: InitialParameters {
@@ -238,6 +244,8 @@ impl Preset {
 
                 fade_speed: 0.005,
                 blurring: 1.0,
+
+                u_time: 0.0,
             },
             PresetName::SlimeRing => Preset {
                 initial_parameters: InitialParameters {
@@ -258,6 +266,8 @@ impl Preset {
 
                 fade_speed: 0.05,
                 blurring: 1.0,
+
+                u_time: 0.0,
             },
             PresetName::ShiftingWeb => Preset {
                 initial_parameters: InitialParameters {
@@ -278,6 +288,8 @@ impl Preset {
 
                 fade_speed: 0.07,
                 blurring: 1.0,
+
+                u_time: 0.0,
             },
             PresetName::Waves => Preset {
                 initial_parameters: InitialParameters {
@@ -298,6 +310,8 @@ impl Preset {
 
                 fade_speed: 0.04,
                 blurring: 1.0,
+
+                u_time: 0.0,
             },
             PresetName::Flower => Preset {
                 initial_parameters: InitialParameters {
@@ -318,6 +332,8 @@ impl Preset {
 
                 fade_speed: 0.02,
                 blurring: 1.0,
+
+                u_time: 0.0,
             },
             PresetName::ChristmasChaos => Preset {
                 initial_parameters: InitialParameters {
@@ -338,6 +354,8 @@ impl Preset {
 
                 fade_speed: 0.02,
                 blurring: 1.0,
+
+                u_time: 0.0,
             },
             PresetName::Explode => Preset {
                 initial_parameters: InitialParameters {
@@ -358,6 +376,8 @@ impl Preset {
 
                 fade_speed: 0.0,
                 blurring: 0.0,
+
+                u_time: 0.0,
             },
             PresetName::Tartan => Preset {
                 initial_parameters: InitialParameters {
@@ -378,6 +398,8 @@ impl Preset {
 
                 fade_speed: 0.01,
                 blurring: 1.0,
+
+                u_time: 0.0,
             },
             PresetName::Globe => Preset {
                 initial_parameters: InitialParameters {
@@ -398,8 +420,43 @@ impl Preset {
 
                 fade_speed: 0.005,
                 blurring: 1.0,
+
+                u_time: 0.0,
             },
         }
+    }
+
+    fn clamp(input: f32, min: f32, max: f32) -> f32 {
+        if input < min {
+            min
+        } else if input > max {
+            max
+        } else {
+            input
+        }
+    }
+
+    fn rand_clamp(input: f32, time_change: f32, min: f32, max: f32) -> f32 {
+        let mut input = input;
+        input += rand::thread_rng().gen_range(-1.0..=1.0) * time_change * max / 2.0;
+        Preset::clamp(input, min, max)
+    }
+
+    pub fn update(&mut self, u_time: f32) {
+        let time_change = u_time - self.u_time;
+
+        self.speed_multiplier = Preset::rand_clamp(self.speed_multiplier, time_change, 0.0, 2.0);
+        self.point_size = Preset::rand_clamp(self.point_size, time_change, 0.0, 5.0);
+        self.random_steer_factor =
+            Preset::rand_clamp(self.random_steer_factor, time_change, 0.0, 0.1);
+        self.constant_steer_factor =
+            Preset::rand_clamp(self.constant_steer_factor, time_change, 0.0, 5.0);
+        self.trail_strength = Preset::rand_clamp(self.trail_strength, time_change, 0.0, 1.0);
+        self.search_radius = Preset::rand_clamp(self.search_radius, time_change, 0.0, 0.1);
+        self.fade_speed = Preset::rand_clamp(self.fade_speed, time_change, 0.0, 0.1);
+        self.blurring = Preset::rand_clamp(self.blurring, time_change, 0.0, 1.0);
+
+        self.u_time = u_time;
     }
 }
 
@@ -428,6 +485,7 @@ impl Distribution<Preset> for Standard {
             color_strategy: rng.gen(),
             fade_speed: rng.gen_range(0.0..=0.1),
             blurring: rng.gen_range(0.0..=1.0),
+            u_time: 0.0,
         }
     }
 }

@@ -78,5 +78,8 @@ impl SlimeMould {
             .reset_points(self.preset.initial_parameters);
     }
 
-    pub fn update(&mut self) {}
+    pub fn update(&mut self, u_time: f32) {
+        self.preset.update(u_time);
+        self.secondary_preset.update(u_time);
+    }
 }

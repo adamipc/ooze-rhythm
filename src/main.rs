@@ -76,6 +76,7 @@ fn main() {
     let mut beat_start_time = u_time;
     let mut blend_value = 0.0;
     let mut beat_transition_time = 0.2;
+    let mut automate_presets = false;
 
     start_loop(event_loop, move |events| {
         screenshot_taker.next_frame();
@@ -92,12 +93,12 @@ fn main() {
         target.finish().unwrap();
 
         u_time += 0.02;
-        slime_mould.update();
 
         let mut action = Action::Continue;
 
         for event in input::input_callback(events, midi_channel.try_iter(), primary_window_id) {
             match event {
+                InputEvent::ToggleAutomation => automate_presets = !automate_presets,
                 InputEvent::UpdateBlendValue(new_value) => blend_value = new_value,
                 InputEvent::UpdateBeatTransitionTime(new_value) => beat_transition_time = new_value,
                 InputEvent::RandomizePreset(slot) => {
@@ -150,6 +151,11 @@ fn main() {
                 }
                 InputEvent::StopEventLoop => action = Action::Stop,
             }
+        }
+
+        if automate_presets {
+            beat_preset.update(u_time);
+            slime_mould.update(u_time);
         }
 
         if got_beat {
