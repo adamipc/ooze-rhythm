@@ -1,16 +1,23 @@
 [package]
 name = "rust-mold"
 version = "0.1.0"
+authors = ["Adam Wendt <thelsdj@gmail.com>"]
+license = "MIT"
+description = "A slime mould audio visualizer"
+readme = "README.md"
+homepage = "https://github.com/adamipc/rust-mold"
+repository = "https://github.com/adamipc/rust-mold"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-beat-detector = { path = "../beat-detector/" }
+beat-detector = { git = "https://github.com/adamipc/beat-detector.git" }
 chrono = "0.4.24"
 config = "0.13.3"
 cpal = { git = "https://github.com/RustAudio/cpal.git", features = ["asio"] }
 glium = "0.32.1"
+glium-glyph = "0.14.0"
 image = "0.24.6"
 lerp = { version = "0.4.0", features = ["derive"] }
 midir = { version = "0.9.1", features = ["winrt"] }

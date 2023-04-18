@@ -8,6 +8,9 @@ use glium::glutin::event::{Event, StartCause};
 use glium::glutin::event_loop::{ControlFlow, EventLoop};
 use glium::glutin::window::Fullscreen;
 use glium::{glutin, Surface};
+use glium_glyph::glyph_brush::{ab_glyph::FontRef, Section, Text};
+use glium_glyph::GlyphBrushBuilder;
+use ringbuffer::{AllocRingBuffer, RingBufferExt, RingBufferWrite};
 use std::sync::mpsc::sync_channel;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -66,6 +69,13 @@ fn main() {
     let mut screenshot_taker = screenshot::AsyncScreenshotTaker::new(5);
     let primary_window_id = display.gl_window().window().id();
 
+    let fira_code: &[u8] = include_bytes!(
+        "../assets/fonts/Fira Code SemiBold Nerd Font Complete Mono Windows Compatible.ttf"
+    );
+    let fira_code_font = FontRef::try_from_slice(fira_code).unwrap();
+
+    let mut glyph_brush = GlyphBrushBuilder::using_font(fira_code_font).build(&display);
+
     // Create our slime mould simulation
     let mut slime_mould = slime_mould::SlimeMould::new(&display, width, height, rand::random());
 
@@ -78,18 +88,39 @@ fn main() {
     let mut beat_transition_time = 0.2;
     let mut automate_presets = false;
 
+    let mut text_buffer = AllocRingBuffer::with_capacity(8);
+
     start_loop(event_loop, move |events| {
         screenshot_taker.next_frame();
 
         let mut got_beat = false;
-        for _bpm in beat_receiver.try_iter() {
+        for bpm in beat_receiver.try_iter() {
             got_beat = true;
+            text_buffer.push((u_time, format!("Got beat! BPM: {bpm:.2}")));
             //println!("Got beat! BPM: {bpm:.2}");
         }
 
+        let screen_dimensions = display.get_framebuffer_dimensions();
+
+        let text_display = text_buffer
+            .iter()
+            .fold(String::new(), |acc, (_, line)| format!("{acc}{line}\n"));
+        glyph_brush.queue(
+            Section::default()
+                .add_text(
+                    Text::new(&text_display[..])
+                        .with_scale(16.0)
+                        .with_color([0.01, 0.98, 0.05, 0.75]),
+                )
+                .with_bounds((screen_dimensions.0 as f32, screen_dimensions.1 as f32 / 2.0)),
+        );
+
         let mut target = display.draw();
         target.clear_color(0.0, 0.0, 0.0, 1.0);
+        //target.clear_color(1.0, 1.0, 1.0, 1.0);
+
         slime_mould.draw(&mut target, &display, u_time, blend_value);
+        glyph_brush.draw_queued(&display, &mut target);
         target.finish().unwrap();
 
         u_time += 0.02;
