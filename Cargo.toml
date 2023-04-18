@@ -1,12 +1,12 @@
 [package]
-name = "rust-mold"
+name = "ooze-rhythm"
 version = "0.1.0"
 authors = ["Adam Wendt <thelsdj@gmail.com>"]
 license = "MIT"
 description = "A slime mould audio visualizer"
 readme = "README.md"
-homepage = "https://github.com/adamipc/rust-mold"
-repository = "https://github.com/adamipc/rust-mold"
+homepage = "https://github.com/adamipc/ooze-rhythm"
+repository = "https://github.com/adamipc/ooze-rhythm"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

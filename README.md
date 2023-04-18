@@ -1,1 +1,1 @@
-# Rust Mold: A slime mould audio visualization simulation
+# Ooze Rhythm: A slime mould audio visualization simulation

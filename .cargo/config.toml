@@ -1,0 +1,4 @@
+[env]
+CPAL_ASIO_DIR = "W:/asio/"
+LIBCLANG_PATH = "C:/Program Files/LLVM/bin/"
+
