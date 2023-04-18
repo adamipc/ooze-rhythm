@@ -48,6 +48,12 @@ pub struct BeatDetector {
     exit_callback: Box<dyn FnOnce() + 'static>,
 }
 
+impl Default for BeatDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BeatDetector {
     pub fn new() -> Self {
         BeatDetector {
