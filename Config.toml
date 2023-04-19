@@ -1,4 +1,6 @@
 audio_host_name = "ASIO"
 audio_device_id = 3
 midi_device_id = 2
+beat_sensitivity = 6_000
+
 

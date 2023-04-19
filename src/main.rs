@@ -36,6 +36,7 @@ fn main() {
         beat_detector.start_listening(
             app_config.audio_host_name.unwrap(),
             app_config.audio_device_id.unwrap(),
+            app_config.beat_sensitivity.unwrap(),
             move |(_, bpm)| {
                 beat_sender.send(bpm).unwrap();
             },
@@ -241,7 +242,7 @@ where
 
         let action = if run_callback {
             let action = callback(&events_buffer);
-            next_frame_time = Instant::now() + Duration::from_nanos(16666667) / 2;
+            next_frame_time = Instant::now() + Duration::from_nanos(16666667) * 2;
             // TODO: Add back the old accumulator loop in some way
 
             events_buffer.clear();

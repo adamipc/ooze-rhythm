@@ -12,7 +12,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-beat-detector = { git = "https://github.com/adamipc/beat-detector.git" }
+#beat-detector = { git = "https://github.com/adamipc/beat-detector.git" }
+beat-detector = { path = "../beat-detector/" }
 chrono = "0.4.24"
 config = "0.13.3"
 cpal = { git = "https://github.com/RustAudio/cpal.git", features = ["asio"] }

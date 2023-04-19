@@ -65,6 +65,7 @@ impl BeatDetector {
         &mut self,
         host_name: String,
         device_id: usize,
+        sensitivity: u32,
         mut callback: impl FnMut((BeatInfo, f64)) + Sync + Send + 'static,
     ) {
         let recording = Arc::new(AtomicBool::new(true));
@@ -105,9 +106,14 @@ impl BeatDetector {
                 //        println!("Beat detected: {:?}", info,);
                 callback((info, 60_000.0 / ema_result));
             };
-            let _ =
-                beat_detector::record::start_listening(on_beat, Some(device), strategy, recording)
-                    .unwrap();
+            let _ = beat_detector::record::start_listening(
+                on_beat,
+                Some(device),
+                strategy,
+                sensitivity as f32,
+                recording,
+            )
+            .unwrap();
         }
     }
 }

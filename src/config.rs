@@ -9,6 +9,7 @@ pub struct AppConfig {
     pub audio_host_name: Option<String>,
     pub audio_device_id: Option<usize>,
     pub midi_device_id: Option<usize>,
+    pub beat_sensitivity: Option<u32>,
 }
 
 pub fn get_config() -> AppConfig {
@@ -25,6 +26,10 @@ pub fn get_config() -> AppConfig {
     let mut arg = args.next();
     while let Some(argument) = arg {
         match &argument[..] {
+            "--set-beat-sensitivity" => {
+                let sensitivity = args.next().unwrap();
+                app_config.beat_sensitivity = Some(sensitivity.parse().unwrap());
+            }
             "--set-audio-device" => {
                 let device_identifier = args.next().unwrap();
                 // We allow passing on command line like "ASIO:3"
